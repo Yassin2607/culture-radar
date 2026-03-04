@@ -15,7 +15,7 @@ export async function POST(
   { params }: { params: Promise<{ sessionId: string }> }
 ) {
   const { sessionId } = await params
-  const sessionOrUndef = sessionStore.get(sessionId)
+  const sessionOrUndef = await sessionStore.get(sessionId)
 
   if (!sessionOrUndef) {
     return NextResponse.json({ error: 'Session not found' }, { status: 404 })
@@ -82,17 +82,17 @@ export async function POST(
     }
   }
 
-  const cur = sessionStore.get(sessionId)
+  const cur = await sessionStore.get(sessionId)
   if (cur) {
-    sessionStore.update(sessionId, {
+    await sessionStore.update(sessionId, {
       results: [...cur.results, result],
       processed: cur.processed + 1,
     })
   }
 
-  const updated = sessionStore.get(sessionId)
+  const updated = await sessionStore.get(sessionId)
   if (updated && updated.processed >= updated.total) {
-    sessionStore.update(sessionId, { status: 'complete' })
+    await sessionStore.update(sessionId, { status: 'complete' })
   }
 
   return NextResponse.json({ processed: 1 })

@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
   const sessionId = uuidv4()
   const total: number = Math.min(body.total ?? 0, 200)
 
-  sessionStore.set({
+  await sessionStore.set({
     id: sessionId,
     status: 'running',
     total,

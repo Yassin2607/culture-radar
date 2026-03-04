@@ -302,7 +302,7 @@ function HomeTab() {
     const url = refresh ? '/api/trends/predict?refresh=1' : '/api/trends/predict'
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), 10 * 60 * 1000) // 10 min
-    fetch(url, { signal: controller.signal })
+    apiFetch(url, { signal: controller.signal })
       .then((r) => r.json())
       .then((data) => {
         if (data.error) throw new Error(data.error)

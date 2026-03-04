@@ -10,13 +10,13 @@ export async function GET(
 ) {
   const { sessionId } = await params
 
-  if (!sessionStore.has(sessionId)) {
+  if (!(await sessionStore.has(sessionId))) {
     return new Response('Session not found', { status: 404 })
   }
 
   const encoder = new TextEncoder()
   let lastSentIndex = 0
-  let startTime = Date.now()
+  const startTime = Date.now()
 
   const stream = new ReadableStream({
     start(controller) {
@@ -24,47 +24,58 @@ export async function GET(
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`))
       }
 
-      const interval = setInterval(() => {
-        const session = sessionStore.get(sessionId)
-        if (!session) {
-          clearInterval(interval)
-          controller.close()
-          return
-        }
+      let polling = true
 
-        // Send any new results since last poll
-        const newResults = session.results.slice(lastSentIndex)
-        for (const result of newResults) {
-          send({ type: 'result', result })
-          lastSentIndex++
-        }
+      const poll = async () => {
+        while (polling) {
+          try {
+            const session = await sessionStore.get(sessionId)
+            if (!session) {
+              controller.close()
+              return
+            }
 
-        // Send progress update
-        send({
-          type: 'progress',
-          processed: session.processed,
-          total: session.total,
-          currentFile: newResults.length > 0 ? newResults[newResults.length - 1].filename : '',
-        })
+            // Send any new results since last poll
+            const newResults = session.results.slice(lastSentIndex)
+            for (const result of newResults) {
+              send({ type: 'result', result })
+              lastSentIndex++
+            }
 
-        // Check for completion or error
-        if (session.status === 'complete' || session.status === 'error' || session.status === 'cancelled') {
-          const summary: ScanSummary = {
-            total: session.total,
-            passed: session.results.filter((r) => r.status === 'pass').length,
-            failed: session.results.filter((r) => r.status === 'fail').length,
-            warnings: session.results.filter((r) => r.status === 'warning').length,
-            errors: session.results.filter((r) => r.status === 'error').length,
-            durationMs: Date.now() - startTime,
+            // Send progress update
+            send({
+              type: 'progress',
+              processed: session.processed,
+              total: session.total,
+              currentFile: newResults.length > 0 ? newResults[newResults.length - 1].filename : '',
+            })
+
+            // Check for completion or error
+            if (session.status === 'complete' || session.status === 'error' || session.status === 'cancelled') {
+              const summary: ScanSummary = {
+                total: session.total,
+                passed: session.results.filter((r) => r.status === 'pass').length,
+                failed: session.results.filter((r) => r.status === 'fail').length,
+                warnings: session.results.filter((r) => r.status === 'warning').length,
+                errors: session.results.filter((r) => r.status === 'error').length,
+                durationMs: Date.now() - startTime,
+              }
+              send({ type: 'complete', summary })
+              controller.close()
+              return
+            }
+          } catch {
+            // DB error — keep polling
           }
-          send({ type: 'complete', summary })
-          clearInterval(interval)
-          controller.close()
+
+          await new Promise((resolve) => setTimeout(resolve, SESSION_POLL_INTERVAL_MS))
         }
-      }, SESSION_POLL_INTERVAL_MS)
+      }
+
+      poll()
 
       req.signal.addEventListener('abort', () => {
-        clearInterval(interval)
+        polling = false
         try { controller.close() } catch { /* already closed */ }
       })
     },
@@ -86,8 +97,8 @@ export async function DELETE(
   { params }: { params: Promise<{ sessionId: string }> }
 ) {
   const { sessionId } = await params
-  if (sessionStore.has(sessionId)) {
-    sessionStore.update(sessionId, { status: 'cancelled' })
+  if (await sessionStore.has(sessionId)) {
+    await sessionStore.update(sessionId, { status: 'cancelled' })
     return new Response(null, { status: 204 })
   }
   return new Response('Not found', { status: 404 })
