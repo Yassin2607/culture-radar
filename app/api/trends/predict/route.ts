@@ -1,16 +1,15 @@
 import { NextResponse } from 'next/server'
-import path from 'path'
-import fs from 'fs'
-import { spawn } from 'child_process'
+import FirecrawlApp from '@mendable/firecrawl-js'
 import Anthropic from '@anthropic-ai/sdk'
 import { supabase } from '@/lib/supabase'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { ProductPrediction } from '@/types/trends'
 
-export const maxDuration = 60
+export const maxDuration = 300
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
+const firecrawl = new FirecrawlApp({ apiKey: process.env.FIRECRAWL_API_KEY ?? '' })
 
-const CACHE_FILE = path.join(process.cwd(), 'data', 'predictions-cache.json')
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const SCORING_BATCH_SIZE = 15
 
@@ -26,23 +25,19 @@ interface RawProduct {
 
 interface ScoredItem {
   index: number
-  // 6-criteria scores (1–10)
   priceQuality: number
   innovation: number
   practicalUtility: number
   giftPotential: number
   seasonalRelevance: number
   viralPotential: number
-  // Derived 0–100 score
   trendScore: number
-  // Text fields
   reasoning: string
   topSignals: string[]
   targetAudience: string[]
   season: string[]
   contentAngles: string[]
   platformBuzz: string
-  // Content concept
   hook: string | null
   contentConcept: string | null
   videoFormat: string | null
@@ -60,7 +55,6 @@ interface PersistentCache {
 }
 
 // ─── New Arrivals Pages ───────────────────────────────────────────────────────
-// Scrape the "Nieuw" section of Action.com — 5 pages × ~30 products = ~150 new products.
 
 const NIEUW_PAGES = [
   'https://www.action.com/nl-nl/nieuw/',
@@ -70,23 +64,29 @@ const NIEUW_PAGES = [
   'https://www.action.com/nl-nl/nieuw/?page=5',
 ]
 
-const PLAYWRIGHT_TIMEOUT_MS = 70_000 // 70s per page (Python scraper needs ~30s)
+// ─── Supabase Cache ──────────────────────────────────────────────────────────
 
-// ─── Cache ────────────────────────────────────────────────────────────────────
-
-function loadCache(): PersistentCache | null {
-  try {
-    return JSON.parse(fs.readFileSync(CACHE_FILE, 'utf-8')) as PersistentCache
-  } catch {
-    return null
+async function loadCache(): Promise<PersistentCache | null> {
+  const { data } = await supabaseAdmin
+    .from('predictions_cache')
+    .select('*')
+    .eq('id', 'main')
+    .single()
+  if (!data) return null
+  return {
+    cachedAt: data.cached_at,
+    predictions: data.predictions as ProductPrediction[],
+    supabaseRowCount: data.supabase_row_count,
   }
 }
 
-function saveCache(entry: PersistentCache): void {
-  try {
-    fs.mkdirSync(path.dirname(CACHE_FILE), { recursive: true })
-    fs.writeFileSync(CACHE_FILE, JSON.stringify(entry), 'utf-8')
-  } catch { /* non-fatal */ }
+async function saveCache(entry: PersistentCache): Promise<void> {
+  await supabaseAdmin.from('predictions_cache').upsert({
+    id: 'main',
+    cached_at: entry.cachedAt,
+    predictions: entry.predictions,
+    supabase_row_count: entry.supabaseRowCount,
+  })
 }
 
 async function getSupabaseRowCount(): Promise<number> {
@@ -113,13 +113,11 @@ function getSeasonHint(): string {
 // ─── Live RSS Trend Fetching ──────────────────────────────────────────────────
 
 const RSS_SOURCES = [
-  // Original 5
   { name: 'Google Trends NL',      url: 'https://trends.google.com/trends/trendingsearches/daily/rss?geo=NL' },
   { name: 'Reddit /r/Netherlands',  url: 'https://www.reddit.com/r/thenetherlands/.rss' },
   { name: 'Reddit OutOfTheLoop',    url: 'https://www.reddit.com/r/OutOfTheLoop/.rss' },
   { name: 'Exploding Topics',       url: 'https://explodingtopics.com/blog/rss.xml' },
   { name: 'Social Media Today',     url: 'https://www.socialmediatoday.com/rss.xml' },
-  // Added from action-trend-ai Lovable project
   { name: 'Reddit TikTokCringe',    url: 'https://www.reddit.com/r/TikTokCringe/.rss' },
   { name: 'MrToucan TikTok Trends', url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UC1SZ-1Ydb7Ri6zEOF0CcwrA' },
   { name: 'Frankwatching NL',       url: 'https://www.frankwatching.com/feed/' },
@@ -162,60 +160,86 @@ async function fetchLiveTrends(): Promise<string> {
   return summary
 }
 
-// ─── Playwright New Arrivals Scraper ─────────────────────────────────────────
-// Uses the local Python/Playwright script — runs a real browser, bypasses bot detection.
+// ─── Firecrawl New Arrivals Scraper ──────────────────────────────────────────
+// Uses Firecrawl cloud API to scrape Action.com (JS-rendered SPA).
 
-async function spawnBatchScraper(pageUrl: string, maxProducts: number): Promise<RawProduct[]> {
-  return new Promise((resolve) => {
-    const payload = JSON.stringify({ searchTerm: 'nieuw', category: 'Nieuw', maxProducts, pageUrl })
-    const scriptPath = path.join(process.cwd(), 'tools', 'scrape_action_batch.py')
-    const child = spawn('python3', [scriptPath, payload])
+interface FirecrawlProduct {
+  name?: string
+  price?: string
+  image?: string
+  url?: string
+}
 
-    let stdout = ''
-    let stderr = ''
-    child.stdout.on('data', (d: Buffer) => { stdout += d.toString() })
-    child.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
+function parsePrice(priceStr: string | undefined): number | null {
+  if (!priceStr) return null
+  const cleaned = priceStr.replace(/[^\d.,]/g, '')
+  if (!cleaned) return null
+  const normalized = cleaned.includes(',') && !cleaned.includes('.')
+    ? cleaned.replace(',', '.')
+    : cleaned.replace('.', '').replace(',', '.')
+  const val = parseFloat(normalized)
+  return isNaN(val) ? null : val
+}
 
-    const killTimer = setTimeout(() => {
-      child.kill()
-      console.warn(`[Scraper] ${pageUrl} killed after ${PLAYWRIGHT_TIMEOUT_MS / 1000}s timeout`)
-      resolve([])
-    }, PLAYWRIGHT_TIMEOUT_MS)
-
-    child.on('close', (code: number | null) => {
-      clearTimeout(killTimer)
-      if (code !== 0) {
-        console.warn(`[Scraper] ${pageUrl} failed (code ${code}): ${stderr.slice(0, 200)}`)
-        return resolve([])
-      }
-      try {
-        const result = JSON.parse(stdout.trim()) as { products: RawProduct[]; count: number; error?: string }
-        if (result.error) {
-          console.warn(`[Scraper] ${pageUrl}: ${result.error}`)
-          return resolve([])
-        }
-        const products = (result.products ?? []).map((p) => ({ ...p, pageUrl }))
-        console.log(`[Scraper] ${pageUrl}: ${products.length} products`)
-        resolve(products)
-      } catch {
-        console.warn(`[Scraper] JSON parse error for ${pageUrl}: ${stdout.slice(0, 200)}`)
-        resolve([])
-      }
+async function scrapePageWithFirecrawl(pageUrl: string): Promise<RawProduct[]> {
+  try {
+    const result = await firecrawl.scrape(pageUrl, {
+      formats: ['markdown'],
+      waitFor: 3000,
+      timeout: 30000,
     })
 
-    child.on('error', (err: Error) => {
-      clearTimeout(killTimer)
-      console.warn(`[Scraper] spawn error for ${pageUrl}: ${err.message}`)
-      resolve([])
+    const markdown = result.markdown ?? ''
+    if (!markdown) {
+      console.warn(`[Firecrawl] ${pageUrl}: no markdown content returned`)
+      return []
+    }
+
+    // Use Claude to extract products from the markdown
+    const extraction = await anthropic.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 4000,
+      messages: [{
+        role: 'user',
+        content: `Extract ALL products from this Action.com "Nieuw" (new arrivals) page content. Return a JSON array only, no markdown fences.
+
+Each product should have: name, price (as string like "1.49"), image (full URL), url (full URL to product page).
+
+Page content:
+${markdown.slice(0, 12000)}
+
+Return ONLY a JSON array like: [{"name":"Product Name","price":"1.49","image":"https://...","url":"https://..."}]
+If no products found, return []`
+      }],
     })
-  })
+
+    const text = extraction.content[0].type === 'text' ? extraction.content[0].text.trim() : '[]'
+    const cleaned = text.replace(/^```json?\n?/i, '').replace(/\n?```$/i, '').trim()
+    const products: FirecrawlProduct[] = JSON.parse(cleaned)
+
+    return products
+      .filter((p) => p.name)
+      .map((p) => ({
+        productName: p.name ?? null,
+        imageUrl: p.image ?? null,
+        productUrl: p.url ?? null,
+        price: parsePrice(p.price),
+        category: 'Nieuw',
+        searchTerm: 'nieuw',
+        pageUrl,
+      }))
+  } catch (err) {
+    console.warn(`[Firecrawl] ${pageUrl}: ${err instanceof Error ? err.message : String(err)}`)
+    return []
+  }
 }
 
 async function scrapeNewArrivals(): Promise<RawProduct[]> {
-  console.log(`[Scraper] Scraping ${NIEUW_PAGES.length} new arrival pages via Playwright`)
-  const results = await Promise.all(NIEUW_PAGES.map((url) => spawnBatchScraper(url, 30)))
+  console.log(`[Firecrawl] Scraping ${NIEUW_PAGES.length} new arrival pages`)
+  // Scrape pages in parallel (Firecrawl handles rate limits)
+  const results = await Promise.all(NIEUW_PAGES.map((url) => scrapePageWithFirecrawl(url)))
   const allProducts = results.flat()
-  console.log(`[Scraper] Total new products scraped: ${allProducts.length}`)
+  console.log(`[Firecrawl] Total new products scraped: ${allProducts.length}`)
   return allProducts
 }
 
@@ -342,7 +366,7 @@ Rules:
 // ─── Main Prediction Pipeline ─────────────────────────────────────────────────
 
 async function runPrediction(): Promise<ProductPrediction[]> {
-  console.log('Fetching new Action products via Playwright + trend signals in parallel')
+  console.log('Fetching new Action products via Firecrawl + trend signals in parallel')
 
   const [allProducts, redditResult, tiktokResult, fbResult, liveTrendSummary] = await Promise.all([
     scrapeNewArrivals(),
@@ -353,7 +377,7 @@ async function runPrediction(): Promise<ProductPrediction[]> {
   ])
 
   if (allProducts.length === 0) {
-    throw new Error('Playwright scrapers returned 0 products — check server logs for spawn errors')
+    throw new Error('Firecrawl scrapers returned 0 products — Action.com may be blocking or Firecrawl quota exceeded')
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -373,14 +397,11 @@ async function runPrediction(): Promise<ProductPrediction[]> {
 
   const seasonHint = getSeasonHint()
 
-  // Score in batches of 15 (keeps output well within max_tokens budget)
   const batches: RawProduct[][] = []
   for (let i = 0; i < allProducts.length; i += SCORING_BATCH_SIZE) {
     batches.push(allProducts.slice(i, i + SCORING_BATCH_SIZE))
   }
 
-  // Run batches sequentially — required by Tier 1 rate limit (8K output tokens/minute).
-  // Each batch completes before the next starts, keeping the rolling window within limits.
   const allScoredItems: ScoredItem[] = []
   const batchErrors: string[] = []
   for (let bi = 0; bi < batches.length; bi++) {
@@ -407,7 +428,6 @@ async function runPrediction(): Promise<ProductPrediction[]> {
     throw new Error(`All ${batches.length} Claude scoring batches failed.\n${batchErrors.join('\n')}`)
   }
 
-  // Merge scores → top 100
   const predictions: ProductPrediction[] = allScoredItems
     .filter((item) => item.index >= 0 && item.index < allProducts.length)
     .map((item) => {
@@ -428,14 +448,12 @@ async function runPrediction(): Promise<ProductPrediction[]> {
         platformBuzz:      item.platformBuzz ?? 'mixed',
         hook:              item.hook ?? null,
         contentConcept:    item.contentConcept ?? null,
-        // 6-criteria scores
         priceQuality:      item.priceQuality ?? null,
         innovation:        item.innovation ?? null,
         practicalUtility:  item.practicalUtility ?? null,
         giftPotential:     item.giftPotential ?? null,
         seasonalRelevance: item.seasonalRelevance ?? null,
         viralPotential:    item.viralPotential ?? null,
-        // Richer content concept
         targetAudience:    Array.isArray(item.targetAudience) ? item.targetAudience : null,
         videoFormat:       item.videoFormat ?? null,
         requiresPerson:    item.requiresPerson ?? null,
@@ -459,7 +477,7 @@ export async function GET(req: Request) {
   const currentCount = await getSupabaseRowCount()
 
   if (!forceRefresh) {
-    const cached = loadCache()
+    const cached = await loadCache()
     if (cached) {
       const age = Date.now() - new Date(cached.cachedAt).getTime()
       const withinTTL = age < CACHE_TTL_MS
@@ -476,7 +494,7 @@ export async function GET(req: Request) {
 
   try {
     const predictions = await runPrediction()
-    saveCache({ cachedAt: new Date().toISOString(), predictions, supabaseRowCount: currentCount })
+    await saveCache({ cachedAt: new Date().toISOString(), predictions, supabaseRowCount: currentCount })
     return NextResponse.json({ predictions, cached: false, cachedAt: new Date().toISOString() })
   } catch (err) {
     console.error('[TrendPredict] Error:', err)
