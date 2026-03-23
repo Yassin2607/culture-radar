@@ -27,7 +27,12 @@ export function middleware(request: NextRequest) {
   const isSSE = pathname.endsWith('/stream') && request.method === 'GET'
   const isAuthRoute = pathname.startsWith('/api/auth/')
   const secret = process.env.API_SECRET
-  if (secret && !isSSE && !isAuthRoute) {
+  if (!isSSE && !isAuthRoute) {
+    if (!secret) {
+      // API_SECRET not configured — reject all API requests in production
+      console.error('[Middleware] API_SECRET environment variable is not set')
+      return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 })
+    }
     const auth = request.headers.get('authorization')
     if (auth !== `Bearer ${secret}`) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })

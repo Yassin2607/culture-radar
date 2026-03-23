@@ -193,7 +193,7 @@ export default function CopyCheckerPage() {
       r.result.suggestions.join(' | '),
       r.result.summary,
     ])
-    const csv = [headers, ...rows].map((row) => row.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n')
+    const csv = [headers, ...rows].map((row) => row.map((c) => `"${String(c).replace(/"/g, '""').replace(/\n/g, ' ').replace(/\r/g, '')}"`).join(',')).join('\n')
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')

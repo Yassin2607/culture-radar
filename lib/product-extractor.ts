@@ -2,6 +2,22 @@ import type { ParsedWeekFile } from '@/types/promo'
 
 const PRODUCT_NUMBER_RE = /\b\d{7}\b/g
 
+/**
+ * Filter out 7-digit numbers that are unlikely to be Action product codes.
+ * Rejects date-like patterns (e.g. 2026031, 1012025), prices, and common false positives.
+ */
+function isLikelyProductNumber(num: string): boolean {
+  const n = parseInt(num, 10)
+  // Action product numbers are typically in the 1000000-9999999 range
+  // Filter out numbers starting with common date prefixes (year patterns)
+  if (num.startsWith('202') || num.startsWith('201') || num.startsWith('200')) return false
+  // Filter out numbers that look like concatenated day+month+year (e.g. 0103202 → 01-03-202x)
+  if (/^[0-3]\d[01]\d\d{3}$/.test(num)) return false
+  // Filter very low numbers (unlikely product codes)
+  if (n < 1000000) return false
+  return true
+}
+
 /** Extract week number from filename. Returns null if not detectable. */
 export function parseWeekFromFilename(filename: string): { week: number | null; year: number } {
   const base = filename.replace(/\.[^.]+$/, '') // strip extension
@@ -50,7 +66,7 @@ export async function extractProductNumbers(file: File): Promise<string[]> {
         const matches = val.match(PRODUCT_NUMBER_RE)
         if (matches) {
           for (const m of matches) {
-            found.add(m)
+            if (isLikelyProductNumber(m)) found.add(m)
           }
         }
       }

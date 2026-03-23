@@ -46,7 +46,7 @@ export default function ResultsTable({ results, summary, isScanning }: Props) {
       r.brandCheck?.quality_issues.join('; ') ?? '',
       r.summary,
     ])
-    const csv = [headers, ...rows].map((row) => row.map((cell) => `"${cell.replace(/"/g, '""')}"`).join(',')).join('\n')
+    const csv = [headers, ...rows].map((row) => row.map((cell) => `"${cell.replace(/"/g, '""').replace(/\n/g, ' ').replace(/\r/g, '')}"`).join(',')).join('\n')
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')

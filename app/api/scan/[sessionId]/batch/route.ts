@@ -15,6 +15,10 @@ export async function POST(
   { params }: { params: Promise<{ sessionId: string }> }
 ) {
   const { sessionId } = await params
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+  if (!UUID_RE.test(sessionId)) {
+    return NextResponse.json({ error: 'Session not found' }, { status: 404 })
+  }
   const sessionOrUndef = await sessionStore.get(sessionId)
 
   if (!sessionOrUndef) {
@@ -40,6 +44,10 @@ export async function POST(
   }
 
   const meta: { id: string; filename: string; mimeType: string } = JSON.parse(metadataRaw)
+  const ALLOWED_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/heic', 'image/heif'])
+  if (!ALLOWED_MIMES.has(meta.mimeType)) {
+    return NextResponse.json({ error: 'Ongeldig bestandstype. Alleen afbeeldingen zijn toegestaan.' }, { status: 400 })
+  }
   const blob = formData.get('file') as Blob | null
   let base64 = ''
   if (blob) {
@@ -82,13 +90,8 @@ export async function POST(
     }
   }
 
-  const cur = await sessionStore.get(sessionId)
-  if (cur) {
-    await sessionStore.update(sessionId, {
-      results: [...cur.results, result],
-      processed: cur.processed + 1,
-    })
-  }
+  // Atomic append — avoids race condition when multiple batch requests run concurrently
+  await sessionStore.appendResult(sessionId, result)
 
   const updated = await sessionStore.get(sessionId)
   if (updated && updated.processed >= updated.total) {

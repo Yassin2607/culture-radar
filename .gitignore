@@ -54,3 +54,10 @@ token.json
 data/*.b64
 data/*.txt
 data/*.json
+
+# local test/debug scripts
+test-*.js
+
+# screenshots
+*.png
+*.jpg

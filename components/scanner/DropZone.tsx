@@ -86,6 +86,8 @@ export default function DropZone({ onFilesSelected, disabled }: Props) {
       file,
     }))
 
+    revokeUrls(prevFilesRef.current)
+    prevFilesRef.current = processable
     setFileCount(processable.length)
     setIsProcessing(false)
     onFilesSelected(processable)
@@ -120,13 +122,28 @@ export default function DropZone({ onFilesSelected, disabled }: Props) {
     [processFiles]
   )
 
+  const prevFilesRef = useRef<ProcessableFile[]>([])
+
+  // Revoke old ObjectURLs when files change or component unmounts
+  const revokeUrls = useCallback((files: ProcessableFile[]) => {
+    for (const f of files) {
+      if (f.objectUrl) URL.revokeObjectURL(f.objectUrl)
+    }
+  }, [])
+
+  useEffect(() => {
+    return () => revokeUrls(prevFilesRef.current)
+  }, [revokeUrls])
+
   const handleClear = useCallback(() => {
+    revokeUrls(prevFilesRef.current)
+    prevFilesRef.current = []
     setFileCount(0)
     setErrors([])
     onFilesSelected([])
     if (inputRef.current) inputRef.current.value = ''
     if (folderInputRef.current) folderInputRef.current.value = ''
-  }, [onFilesSelected])
+  }, [onFilesSelected, revokeUrls])
 
   return (
     <div className="space-y-3">

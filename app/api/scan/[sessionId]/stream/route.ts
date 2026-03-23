@@ -9,6 +9,10 @@ export async function GET(
   { params }: { params: Promise<{ sessionId: string }> }
 ) {
   const { sessionId } = await params
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+  if (!UUID_RE.test(sessionId)) {
+    return new Response('Session not found', { status: 404 })
+  }
 
   if (!(await sessionStore.has(sessionId))) {
     return new Response('Session not found', { status: 404 })
@@ -72,7 +76,13 @@ export async function GET(
         }
       }
 
-      poll()
+      poll().catch((err) => {
+        console.error('[SSE] poll() crashed:', err)
+        try {
+          send({ type: 'complete', summary: { total: 0, passed: 0, failed: 0, warnings: 0, errors: 1, durationMs: Date.now() - startTime } })
+          controller.close()
+        } catch { /* already closed */ }
+      })
 
       req.signal.addEventListener('abort', () => {
         polling = false
@@ -97,7 +107,8 @@ export async function DELETE(
   { params }: { params: Promise<{ sessionId: string }> }
 ) {
   const { sessionId } = await params
-  if (await sessionStore.has(sessionId)) {
+  const UUID_RE_DEL = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+  if (UUID_RE_DEL.test(sessionId) && await sessionStore.has(sessionId)) {
     await sessionStore.update(sessionId, { status: 'cancelled' })
     return new Response(null, { status: 204 })
   }

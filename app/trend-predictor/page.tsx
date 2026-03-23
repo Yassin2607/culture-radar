@@ -141,7 +141,7 @@ function SavedProvider({ children }: { children: React.ReactNode }) {
 
 // ─── Main Page ───────────────────────────────────────────────────────────────
 
-type TabId = 'home' | 'saved' | 'trends'
+type TabId = 'home' | 'saved' | 'trends' | 'rankings' | 'social' | 'pains-gains'
 type SourceFilter = 'all' | 'reddit' | 'tiktok' | 'facebook'
 
 export default function TrendPredictorPage() {
@@ -180,6 +180,9 @@ function TrendPredictorInner() {
             { id: 'home', label: 'Home' },
             { id: 'saved', label: 'Opgeslagen', count: savedProducts.length },
             { id: 'trends', label: 'Trends' },
+            { id: 'rankings', label: 'Rankings' },
+            { id: 'social', label: 'Social Data' },
+            { id: 'pains-gains', label: 'Pains & Gains' },
           ] as { id: TabId; label: string; count?: number }[]).map((tab) => (
             <button
               key={tab.id}
@@ -208,7 +211,12 @@ function TrendPredictorInner() {
         </div>
       </div>
 
-      {activeTab === 'home' ? <HomeTab /> : activeTab === 'saved' ? <SavedTab /> : <TrendsTab />}
+      {activeTab === 'home' ? <HomeTab />
+        : activeTab === 'saved' ? <SavedTab />
+        : activeTab === 'trends' ? <TrendsTab />
+        : activeTab === 'rankings' ? <RankingsTab />
+        : activeTab === 'social' ? <SocialDataTab />
+        : <PainsGainsTab />}
     </div>
   )
 }
@@ -301,14 +309,19 @@ function HomeTab() {
     setError(null)
     const url = refresh ? '/api/trends/predict?refresh=1' : '/api/trends/predict'
     const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 10 * 60 * 1000) // 10 min
+    const timeoutId = setTimeout(() => controller.abort(), 10 * 60 * 1000) // 10 min — pipeline takes ~5 min
     apiFetch(url, { signal: controller.signal })
       .then((r) => r.json())
       .then((data) => {
         if (data.error) throw new Error(data.error)
-        setPredictions(data.predictions ?? [])
+        const preds = data.predictions ?? []
+        setPredictions(preds)
         setCached(data.cached ?? false)
         setCachedAt(data.cachedAt ?? null)
+        // Share with Rankings tab via localStorage
+        if (preds.length > 0) {
+          try { localStorage.setItem('predictions_cache_local', JSON.stringify(preds)) } catch { /* ignore */ }
+        }
       })
       .catch((err: Error) => setError(err.name === 'AbortError' ? 'Request timed out after 10 minutes' : err.message))
       .finally(() => { clearTimeout(timeoutId); setLoading(false) })
@@ -1703,6 +1716,472 @@ function FacebookCard({ post }: { post: FacebookPost & { source: 'facebook' } })
           View post
         </a>
       )}
+    </div>
+  )
+}
+
+// ─── Rankings Tab ─────────────────────────────────────────────────────────────
+
+function RankingsTab() {
+  const [predictions, setPredictions] = useState<ProductPrediction[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [expanded, setExpanded] = useState<number | null>(null)
+
+  useEffect(() => {
+    // Try localStorage first (populated by HomeTab) for instant load
+    try {
+      const local = localStorage.getItem('predictions_cache_local')
+      if (local) {
+        const preds = JSON.parse(local)
+        if (Array.isArray(preds) && preds.length > 0) {
+          setPredictions(preds)
+          setLoading(false)
+          return
+        }
+      }
+    } catch { /* ignore */ }
+
+    // Fall back to Supabase cache (never triggers the full pipeline)
+    apiFetch('/api/trends/predict?cacheOnly=1')
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.error) throw new Error(data.error)
+        setPredictions(data.predictions ?? [])
+      })
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setLoading(false))
+  }, [])
+
+  if (loading) return <div className="px-8 py-12 text-center text-sm text-gray-500">Loading rankings…</div>
+  if (error) return <div className="px-8 py-6 text-sm text-red-600">{error}</div>
+  if (!predictions.length) return <div className="px-8 py-12 text-center text-sm text-gray-400">No data — run a prediction first on the Home tab.</div>
+
+  const CHART_HEIGHT = 110
+  const top5 = predictions.slice(0, 5)
+  const maxScore = Math.max(...top5.map((p) => p.trendScore), 1)
+
+  const scoreColor = (s: number) => s >= 75 ? '#dc2626' : s >= 50 ? '#f59e0b' : '#6b7280'
+
+  const CRITERIA: Array<{ key: keyof ProductPrediction; label: string }> = [
+    { key: 'priceQuality',      label: 'Prijs-kwaliteit' },
+    { key: 'innovation',        label: 'Innovatie' },
+    { key: 'practicalUtility',  label: 'Praktisch nut' },
+    { key: 'giftPotential',     label: 'Cadeau potentie' },
+    { key: 'seasonalRelevance', label: 'Seizoen' },
+    { key: 'viralPotential',    label: 'Viraal potentieel' },
+  ]
+
+  return (
+    <div className="px-8 py-6 space-y-6">
+      {/* Bar chart top 5 */}
+      <div className="rounded-xl border border-gray-200 bg-white p-5">
+        <p className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-4">Top 5 producten</p>
+        <div className="flex items-end gap-3">
+          {top5.map((p) => {
+            const barH = Math.max(4, Math.round((p.trendScore / maxScore) * CHART_HEIGHT))
+            const color = scoreColor(p.trendScore)
+            return (
+              <div key={p.productName ?? p.productType} className="flex flex-col items-center gap-1 flex-1">
+                <span className="text-xs font-bold" style={{ color }}>{p.trendScore}</span>
+                <div className="w-full rounded-t-md" style={{ height: barH, backgroundColor: color }} />
+                <span className="text-xs text-gray-500 text-center leading-tight line-clamp-2" style={{ maxWidth: 80 }}>
+                  {p.productName ?? p.productType}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Full ranked list — click to expand criteria */}
+      <div className="space-y-2">
+        {predictions.map((p, i) => {
+          const score = p.trendScore
+          const color = scoreColor(score)
+          const isOpen = expanded === i
+          return (
+            <div key={i} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              {/* Row header */}
+              <button
+                className="w-full flex items-center gap-4 px-4 py-3 text-left"
+                onClick={() => setExpanded(isOpen ? null : i)}
+              >
+                <span className="text-sm font-bold text-gray-300 w-6 text-right flex-shrink-0">{i + 1}</span>
+                {p.imageUrl && (
+                  <img src={p.imageUrl} alt="" className="w-10 h-10 object-cover rounded-lg flex-shrink-0"
+                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-900 truncate">{p.productName ?? p.productType}</p>
+                  <p className="text-xs text-gray-400 truncate">{p.topSignals?.[0] ?? p.platformBuzz}</p>
+                </div>
+                {p.price != null && (
+                  <span className="text-xs font-medium text-gray-500 flex-shrink-0">€{p.price.toFixed(2)}</span>
+                )}
+                <div className="flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold text-white"
+                  style={{ backgroundColor: color }}>
+                  {score}
+                </div>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2"
+                  className="flex-shrink-0 transition-transform"
+                  style={{ transform: isOpen ? 'rotate(180deg)' : 'none' }}>
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </button>
+
+              {/* Expanded criteria breakdown */}
+              {isOpen && (
+                <div className="px-4 pb-4 pt-1 border-t border-gray-100 space-y-3">
+                  {/* 6 criteria bars */}
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-2">
+                    {CRITERIA.map(({ key, label }) => {
+                      const val = p[key] as number | null | undefined
+                      if (val == null) return null
+                      const pct = (val / 10) * 100
+                      const barColor = val >= 7 ? '#16a34a' : val >= 4 ? '#f59e0b' : '#dc2626'
+                      return (
+                        <div key={key}>
+                          <div className="flex justify-between text-xs mb-0.5">
+                            <span className="text-gray-500">{label}</span>
+                            <span className="font-bold" style={{ color: barColor }}>{val}/10</span>
+                          </div>
+                          <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
+                            <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: barColor }} />
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                  {/* Reasoning */}
+                  {p.reasoning && (
+                    <p className="text-xs text-gray-600 leading-relaxed">{p.reasoning}</p>
+                  )}
+                  {/* Top signals */}
+                  {p.topSignals?.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {p.topSignals.map((s, j) => (
+                        <span key={j} className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{s}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ─── Social Data Tab ──────────────────────────────────────────────────────────
+
+interface SocialPost { platform: string; caption: string; group: string; url: string; likes: number }
+interface SocialResponse {
+  items: SocialPost[]
+  total: number
+  page: number
+  totalPages: number
+  platformCounts: Record<string, number>
+}
+
+const PLATFORM_BADGE: Record<string, { bg: string; color: string }> = {
+  TikTok:   { bg: '#000', color: '#fff' },
+  Facebook: { bg: '#1877f2', color: '#fff' },
+  Reddit:   { bg: '#ff4500', color: '#fff' },
+}
+
+const SOCIAL_CACHE_KEY = 'social_posts_cache'
+const SOCIAL_CACHE_TTL = 5 * 60 * 1000 // 5 minutes
+
+function SocialDataTab() {
+  const [data, setData] = useState<SocialResponse | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [platform, setPlatform] = useState('')
+  const [page, setPage] = useState(1)
+
+  useEffect(() => {
+    const cacheKey = `${SOCIAL_CACHE_KEY}_${platform}_${page}`
+    try {
+      const cached = sessionStorage.getItem(cacheKey)
+      if (cached) {
+        const { data: d, ts } = JSON.parse(cached)
+        if (Date.now() - ts < SOCIAL_CACHE_TTL) { setData(d); setLoading(false); return }
+      }
+    } catch { /* ignore */ }
+
+    setLoading(true)
+    const params = new URLSearchParams({ page: String(page) })
+    if (platform) params.set('platform', platform)
+    apiFetch(`/api/social-posts?${params}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.error) throw new Error(d.error)
+        setData(d)
+        try { sessionStorage.setItem(cacheKey, JSON.stringify({ data: d, ts: Date.now() })) } catch { /* ignore */ }
+      })
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setLoading(false))
+  }, [platform, page])
+
+  const changePlatform = (p: string) => { setPlatform(p); setPage(1) }
+
+  return (
+    <div className="px-8 py-6 space-y-4">
+      {/* Platform filter */}
+      <div className="flex gap-2 flex-wrap">
+        {(['', 'TikTok', 'Facebook', 'Reddit'] as const).map((p) => {
+          const label = p || 'All'
+          const count = p && data ? data.platformCounts[p] : data?.total
+          return (
+            <button key={label} onClick={() => changePlatform(p)}
+              className="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
+              style={platform === p
+                ? { backgroundColor: 'var(--action-red)', color: '#fff' }
+                : { backgroundColor: '#f3f4f6', color: '#374151' }}>
+              {label}{count != null ? ` (${count})` : ''}
+            </button>
+          )
+        })}
+      </div>
+
+      {loading && <div className="py-12 text-center text-sm text-gray-400">Loading posts…</div>}
+      {error && <div className="text-sm text-red-600">{error}</div>}
+
+      {data && !loading && (
+        <>
+          <div className="space-y-2">
+            {data.items.map((post, i) => {
+              const badge = PLATFORM_BADGE[post.platform] ?? { bg: '#6b7280', color: '#fff' }
+              return (
+                <div key={i} className="bg-white rounded-xl border border-gray-200 px-4 py-3 flex gap-3 items-start">
+                  <span className="flex-shrink-0 px-2 py-0.5 rounded text-xs font-bold mt-0.5"
+                    style={{ backgroundColor: badge.bg, color: badge.color }}>
+                    {post.platform}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-gray-800 line-clamp-2">{post.caption || '—'}</p>
+                    {post.group && <p className="text-xs text-gray-400 mt-0.5">{post.group}</p>}
+                  </div>
+                  {post.url && (
+                    <a href={post.url} target="_blank" rel="noopener noreferrer"
+                      className="flex-shrink-0 text-xs text-blue-500 hover:underline mt-0.5">
+                      Open ↗
+                    </a>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+
+          {/* Pagination */}
+          {data.totalPages > 1 && (
+            <div className="flex items-center justify-center gap-2 pt-2">
+              <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}
+                className="px-3 py-1.5 rounded-lg text-sm disabled:opacity-40"
+                style={{ backgroundColor: '#f3f4f6' }}>← Vorige</button>
+              <span className="text-sm text-gray-500">{page} / {data.totalPages}</span>
+              <button onClick={() => setPage((p) => Math.min(data.totalPages, p + 1))} disabled={page === data.totalPages}
+                className="px-3 py-1.5 rounded-lg text-sm disabled:opacity-40"
+                style={{ backgroundColor: '#f3f4f6' }}>Volgende →</button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+// ─── Pains & Gains Tab ────────────────────────────────────────────────────────
+
+interface SourcePost { platform: string; caption: string; url: string }
+interface PainGainItem { keyword: string; score: number; count: number; postIndices: number[] }
+interface PainsGainsData { gains: PainGainItem[]; pains: PainGainItem[]; posts: SourcePost[] }
+
+// v3 suffix busts cache after prompt fix for strict sentiment matching
+const PAINS_CACHE_KEY = 'pains_gains_cache_v3'
+const PAINS_CACHE_TTL = 60 * 60 * 1000 // 1 hour
+
+function PainsGainsTab() {
+  const [data, setData] = useState<PainsGainsData | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [selectedKeyword, setSelectedKeyword] = useState<{ keyword: string; type: 'gain' | 'pain'; posts: SourcePost[] } | null>(null)
+
+  useEffect(() => {
+    // Remove old cache keys
+    try { localStorage.removeItem('pains_gains_cache') } catch { /* ignore */ }
+    try { localStorage.removeItem('pains_gains_cache_v2') } catch { /* ignore */ }
+    try {
+      const cached = localStorage.getItem(PAINS_CACHE_KEY)
+      if (cached) {
+        const { data: d, ts } = JSON.parse(cached)
+        // Only use cache if it has the posts field (new format)
+        if (Date.now() - ts < PAINS_CACHE_TTL && Array.isArray(d?.posts)) { setData(d); setLoading(false); return }
+      }
+    } catch { /* ignore */ }
+
+    apiFetch('/api/trends/pains-gains')
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.error) throw new Error(d.error)
+        setData(d)
+        try { localStorage.setItem(PAINS_CACHE_KEY, JSON.stringify({ data: d, ts: Date.now() })) } catch { /* ignore */ }
+      })
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setLoading(false))
+  }, [])
+
+  if (loading) return <div className="px-8 py-12 text-center text-sm text-gray-400">Analysing social posts…</div>
+  if (error) return <div className="px-8 py-6 text-sm text-red-600">{error}</div>
+  if (!data) return null
+
+  const maxScore = Math.max(...[...data.gains, ...data.pains].map((i) => i.score), 1)
+
+  const renderItem = (item: PainGainItem, type: 'gain' | 'pain', rank: number) => {
+    const barColor = type === 'gain' ? '#16a34a' : '#dc2626'
+    const pct = (item.score / maxScore) * 100
+    return (
+      <button
+        key={item.keyword}
+        onClick={() => setSelectedKeyword({ keyword: item.keyword, type, posts: (item.postIndices ?? []).map((i) => (data!.posts ?? [])[i]).filter(Boolean) })}
+        className="w-full flex items-center gap-3 py-2 border-b border-gray-100 last:border-0 text-left hover:bg-gray-50 rounded transition-colors px-1"
+      >
+        <span className="text-xs font-bold text-gray-300 w-5 text-right flex-shrink-0">{rank}</span>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium text-gray-800 capitalize">{item.keyword}</p>
+          <div className="mt-1 h-1.5 rounded-full bg-gray-100 overflow-hidden">
+            <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: barColor }} />
+          </div>
+        </div>
+        <div className="flex-shrink-0 text-right">
+          <span className="text-sm font-bold" style={{ color: barColor }}>
+            {type === 'gain' ? '+' : '-'}{item.score.toFixed(1)}
+          </span>
+          <p className="text-xs text-gray-400">{item.count}×</p>
+        </div>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2" className="flex-shrink-0">
+          <polyline points="9 18 15 12 9 6" />
+        </svg>
+      </button>
+    )
+  }
+
+  return (
+    <>
+      <div className="px-8 py-6">
+        {/* Summary */}
+        <div className="grid grid-cols-3 gap-4 mb-6">
+          {[
+            { label: 'Keywords', value: data.gains.length + data.pains.length, color: '#374151' },
+            { label: 'Gains', value: data.gains.length, color: '#16a34a' },
+            { label: 'Pains', value: data.pains.length, color: '#dc2626' },
+          ].map(({ label, value, color }) => (
+            <div key={label} className="bg-white rounded-xl border border-gray-200 px-4 py-3 text-center">
+              <p className="text-2xl font-bold" style={{ color }}>{value}</p>
+              <p className="text-xs text-gray-400 mt-0.5">{label}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* Two columns */}
+        <div className="grid grid-cols-2 gap-4">
+          <div className="bg-white rounded-xl border border-gray-200 p-4">
+            <h3 className="text-sm font-bold text-green-700 mb-3">Gains (Positief)</h3>
+            {data.gains.length > 0
+              ? data.gains.map((item, i) => renderItem(item, 'gain', i + 1))
+              : <p className="text-sm text-gray-400">Geen gevonden</p>}
+          </div>
+          <div className="bg-white rounded-xl border border-gray-200 p-4">
+            <h3 className="text-sm font-bold text-red-700 mb-3">Pains (Negatief)</h3>
+            {data.pains.length > 0
+              ? data.pains.map((item, i) => renderItem(item, 'pain', i + 1))
+              : <p className="text-sm text-gray-400">Geen gevonden</p>}
+          </div>
+        </div>
+      </div>
+
+      {/* Source posts modal */}
+      {selectedKeyword && (
+        <KeywordPostsModal
+          keyword={selectedKeyword.keyword}
+          type={selectedKeyword.type}
+          posts={selectedKeyword.posts}
+          onClose={() => setSelectedKeyword(null)}
+        />
+      )}
+    </>
+  )
+}
+
+// ─── Keyword Posts Modal ───────────────────────────────────────────────────────
+
+const KW_PLATFORM_BADGE: Record<string, { bg: string; color: string }> = {
+  TikTok:   { bg: '#000', color: '#fff' },
+  Facebook: { bg: '#1877f2', color: '#fff' },
+  Reddit:   { bg: '#ff4500', color: '#fff' },
+}
+
+function KeywordPostsModal({ keyword, type, posts, onClose }: { keyword: string; type: 'gain' | 'pain'; posts: SourcePost[]; onClose: () => void }) {
+  const accentColor = type === 'gain' ? '#16a34a' : '#dc2626'
+
+  // Close on Escape
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [onClose])
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.4)' }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[80vh] flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+          <div>
+            <p className="text-xs text-gray-400 uppercase tracking-wide">{type === 'gain' ? 'Gain' : 'Pain'} · Bron posts</p>
+            <h3 className="text-sm font-bold mt-0.5 capitalize" style={{ color: accentColor }}>{keyword}</h3>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Posts list */}
+        <div className="overflow-y-auto flex-1 px-5 py-3 space-y-2">
+          {posts.length === 0 && (
+            <p className="text-sm text-gray-400 py-6 text-center">Geen posts gevonden voor &ldquo;{keyword}&rdquo;</p>
+          )}
+          {posts.map((post, i) => {
+            const badge = KW_PLATFORM_BADGE[post.platform] ?? { bg: '#6b7280', color: '#fff' }
+            return (
+              <div key={i} className="flex gap-3 items-start bg-gray-50 rounded-xl px-3 py-2.5">
+                <span className="flex-shrink-0 px-2 py-0.5 rounded text-xs font-bold mt-0.5"
+                  style={{ backgroundColor: badge.bg, color: badge.color }}>
+                  {post.platform}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-gray-800 leading-snug line-clamp-3">{post.caption}</p>
+                </div>
+                {post.url && (
+                  <a href={post.url} target="_blank" rel="noopener noreferrer"
+                    className="flex-shrink-0 text-xs text-blue-500 hover:underline mt-0.5">↗</a>
+                )}
+              </div>
+            )
+          })}
+        </div>
+
+        {posts.length > 0 && (
+          <div className="px-5 py-3 border-t border-gray-100 text-xs text-gray-400 text-center">
+            {posts.length} post{posts.length !== 1 ? 's' : ''} gevonden
+          </div>
+        )}
+      </div>
     </div>
   )
 }

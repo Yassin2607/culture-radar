@@ -22,14 +22,23 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   const { base64, filename } = await req.json()
-  if (!base64) return NextResponse.json({ error: 'No base64 provided' }, { status: 400 })
-  if (typeof base64 === 'string' && base64.length > 6_800_000) {
+  if (!base64 || typeof base64 !== 'string') return NextResponse.json({ error: 'No base64 provided' }, { status: 400 })
+  if (base64.length > 6_800_000) {
     return NextResponse.json({ error: 'Bestand te groot. Maximum 5MB.' }, { status: 400 })
+  }
+  // Validate actual PDF file signature (%PDF-)
+  try {
+    const header = Buffer.from(base64.slice(0, 12), 'base64').toString('binary')
+    if (!header.startsWith('%PDF-')) {
+      return NextResponse.json({ error: 'Ongeldig bestand. Alleen PDF bestanden zijn toegestaan.' }, { status: 400 })
+    }
+  } catch {
+    return NextResponse.json({ error: 'Ongeldig bestand.' }, { status: 400 })
   }
   if (filename && typeof filename === 'string') {
     const ext = filename.split('.').pop()?.toLowerCase()
-    if (!['pdf', 'docx', 'txt', 'doc'].includes(ext ?? '')) {
-      return NextResponse.json({ error: 'Alleen .pdf, .docx en .txt bestanden zijn toegestaan.' }, { status: 400 })
+    if (ext !== 'pdf') {
+      return NextResponse.json({ error: 'Alleen .pdf bestanden zijn toegestaan.' }, { status: 400 })
     }
   }
   await supabaseAdmin.from(TABLE).upsert({

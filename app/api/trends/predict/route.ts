@@ -5,13 +5,14 @@ import { supabase } from '@/lib/supabase'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { ProductPrediction } from '@/types/trends'
 
-export const maxDuration = 60
+export const maxDuration = 300
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
 const firecrawl = new FirecrawlApp({ apiKey: process.env.FIRECRAWL_API_KEY ?? '' })
 
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const SCORING_BATCH_SIZE = 15
+const SCORING_CONCURRENCY = 2
 
 interface RawProduct {
   productName: string | null
@@ -60,19 +61,20 @@ const NIEUW_PAGES = [
   'https://www.action.com/nl-nl/nieuw/',
   'https://www.action.com/nl-nl/nieuw/?page=2',
   'https://www.action.com/nl-nl/nieuw/?page=3',
-  'https://www.action.com/nl-nl/nieuw/?page=4',
-  'https://www.action.com/nl-nl/nieuw/?page=5',
 ]
 
 // ─── Supabase Cache ──────────────────────────────────────────────────────────
 
 async function loadCache(): Promise<PersistentCache | null> {
-  const { data } = await supabaseAdmin
+  const { data, error } = await supabaseAdmin
     .from('predictions_cache')
     .select('*')
     .eq('id', 'main')
     .single()
-  if (!data) return null
+  if (error || !data) {
+    if (error) console.warn('[TrendPredict] Cache load failed:', error.message)
+    return null
+  }
   return {
     cachedAt: data.cached_at,
     predictions: data.predictions as ProductPrediction[],
@@ -174,34 +176,71 @@ function parsePrice(priceStr: string | undefined): number | null {
   if (!priceStr) return null
   const cleaned = priceStr.replace(/[^\d.,]/g, '')
   if (!cleaned) return null
-  const normalized = cleaned.includes(',') && !cleaned.includes('.')
-    ? cleaned.replace(',', '.')
-    : cleaned.replace('.', '').replace(',', '.')
+  let normalized: string
+  if (cleaned.includes(',') && !cleaned.includes('.')) {
+    // Dutch decimal: "1,49" → "1.49"
+    normalized = cleaned.replace(',', '.')
+  } else if (cleaned.includes(',') && cleaned.includes('.')) {
+    // Both separators — determine which is decimal by last occurrence
+    const dotIdx = cleaned.lastIndexOf('.')
+    const commaIdx = cleaned.lastIndexOf(',')
+    if (dotIdx > commaIdx) {
+      // "1,499.99" → remove commas
+      normalized = cleaned.replace(/,/g, '')
+    } else {
+      // "1.499,99" → remove dots, replace comma with dot
+      normalized = cleaned.replace(/\./g, '').replace(',', '.')
+    }
+  } else {
+    // Only dots or only digits: "1.49" or "149" — use as-is
+    normalized = cleaned
+  }
   const val = parseFloat(normalized)
   return isNaN(val) ? null : val
 }
 
 async function scrapePageWithFirecrawl(pageUrl: string): Promise<RawProduct[]> {
-  try {
-    const result = await firecrawl.scrape(pageUrl, {
-      formats: ['markdown'],
-      waitFor: 3000,
-      timeout: 30000,
-    })
+  const MAX_RETRIES = 3
+  let lastError: Error | null = null
 
-    const markdown = result.markdown ?? ''
-    if (!markdown) {
-      console.warn(`[Firecrawl] ${pageUrl}: no markdown content returned`)
-      return []
-    }
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      if (attempt > 0) {
+        const waitMs = 1000 * Math.pow(2, attempt - 1) // 1s, 2s, 4s
+        console.log(`[Firecrawl] ${pageUrl}: retrying after ${waitMs}ms (attempt ${attempt + 1}/${MAX_RETRIES})`)
+        await new Promise((resolve) => setTimeout(resolve, waitMs))
+      }
 
-    // Use Claude to extract products from the markdown
-    const extraction = await anthropic.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 4000,
-      messages: [{
-        role: 'user',
-        content: `Extract ALL products from this Action.com "Nieuw" (new arrivals) page content. Return a JSON array only, no markdown fences.
+      const result = await firecrawl.scrape(pageUrl, {
+        formats: ['markdown'],
+        waitFor: 3000,
+        timeout: 30000,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept-Language': 'nl-NL,nl;q=0.9',
+        },
+      })
+
+      const markdown = result.markdown ?? ''
+      if (!markdown) {
+        console.warn(`[Firecrawl] ${pageUrl}: attempt ${attempt + 1}: no markdown content returned`)
+        lastError = new Error('No markdown returned from Firecrawl')
+        if (attempt < MAX_RETRIES - 1) continue
+        throw lastError
+      }
+
+      console.log(`[Firecrawl] ${pageUrl}: received ${markdown.length} chars of markdown`)
+
+      // Use Claude to extract products from the markdown (with retry on failures)
+      let extraction
+      for (let extractAttempt = 0; extractAttempt < 2; extractAttempt++) {
+        try {
+          extraction = await anthropic.messages.create({
+            model: 'claude-haiku-4-5-20251001',
+            max_tokens: 4000,
+            messages: [{
+              role: 'user',
+              content: `Extract ALL products from this Action.com "Nieuw" (new arrivals) page content. Return a JSON array only, no markdown fences.
 
 Each product should have: name, price (as string like "1.49"), image (full URL), url (full URL to product page).
 
@@ -210,36 +249,90 @@ ${markdown.slice(0, 12000)}
 
 Return ONLY a JSON array like: [{"name":"Product Name","price":"1.49","image":"https://...","url":"https://..."}]
 If no products found, return []`
-      }],
-    })
+            }],
+          })
+          break
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err)
+          
+          // Check for insufficient credits error
+          if (msg.includes('credit balance is too low') || msg.includes('insufficient_quota')) {
+            throw new Error(`Anthropic API credits exhausted. Please add more credits to your Anthropic account. Error: ${msg}`)
+          }
+          
+          if (extractAttempt === 0) {
+            if ((msg.includes('429') || msg.includes('529')) && extractAttempt < 1) {
+              console.log(`[Claude] ${pageUrl}: rate limited, retrying extraction`)
+              await new Promise((resolve) => setTimeout(resolve, 2000))
+              continue
+            }
+          }
+          throw err
+        }
+      }
 
-    const text = extraction.content[0].type === 'text' ? extraction.content[0].text.trim() : '[]'
-    const cleaned = text.replace(/^```json?\n?/i, '').replace(/\n?```$/i, '').trim()
-    const products: FirecrawlProduct[] = JSON.parse(cleaned)
+      if (!extraction) throw new Error('Failed to create extraction')
 
-    return products
-      .filter((p) => p.name)
-      .map((p) => ({
-        productName: p.name ?? null,
-        imageUrl: p.image ?? null,
-        productUrl: p.url ?? null,
-        price: parsePrice(p.price),
-        category: 'Nieuw',
-        searchTerm: 'nieuw',
-        pageUrl,
-      }))
-  } catch (err) {
-    console.warn(`[Firecrawl] ${pageUrl}: ${err instanceof Error ? err.message : String(err)}`)
-    return []
+      const text = extraction.content[0].type === 'text' ? extraction.content[0].text.trim() : '[]'
+      const cleaned = text.replace(/^```json?\n?/i, '').replace(/\n?```$/i, '').trim()
+      let products: FirecrawlProduct[] = []
+      try {
+        products = JSON.parse(cleaned)
+      } catch (parseErr) {
+        console.error(`[Firecrawl] ${pageUrl}: failed to parse Claude response as JSON:`, cleaned.slice(0, 200))
+        throw parseErr
+      }
+
+      const mapped = products
+        .filter((p) => p.name)
+        .map((p) => ({
+          productName: p.name ?? null,
+          imageUrl: p.image ?? null,
+          productUrl: p.url ?? null,
+          price: parsePrice(p.price),
+          category: 'Nieuw',
+          searchTerm: 'nieuw',
+          pageUrl,
+        }))
+
+      console.log(`[Firecrawl] ${pageUrl}: extracted ${mapped.length} products`)
+      return mapped
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err))
+      console.warn(`[Firecrawl] ${pageUrl}: attempt ${attempt + 1} failed: ${lastError.message}`)
+      // Credit errors are fatal — don't retry, propagate immediately
+      if (lastError.message.includes('credits exhausted') || lastError.message.includes('credit balance is too low')) {
+        throw lastError
+      }
+    }
   }
+
+  console.error(`[Firecrawl] ${pageUrl}: all ${MAX_RETRIES} attempts failed. Last error: ${lastError?.message}`)
+  return []
 }
 
 async function scrapeNewArrivals(): Promise<RawProduct[]> {
-  console.log(`[Firecrawl] Scraping ${NIEUW_PAGES.length} new arrival pages`)
+  console.log(`[Firecrawl] Scraping ${NIEUW_PAGES.length} new arrival pages in parallel`)
   // Scrape pages in parallel (Firecrawl handles rate limits)
-  const results = await Promise.all(NIEUW_PAGES.map((url) => scrapePageWithFirecrawl(url)))
-  const allProducts = results.flat()
-  console.log(`[Firecrawl] Total new products scraped: ${allProducts.length}`)
+  const results = await Promise.allSettled(NIEUW_PAGES.map((url) => scrapePageWithFirecrawl(url)))
+  
+  results.forEach((r, i) =>
+    r.status === 'fulfilled'
+      ? console.log(`[Firecrawl] Page ${i + 1}: ${r.value.length} products`)
+      : console.error(`[Firecrawl] Page ${i + 1}: error - ${r.reason instanceof Error ? r.reason.message : String(r.reason)}`)
+  )
+
+  // Surface fatal errors (e.g. Anthropic credits) instead of burying them
+  const fatalError = results.find((r): r is PromiseRejectedResult => {
+    if (r.status !== 'rejected') return false
+    const msg = r.reason instanceof Error ? r.reason.message : String(r.reason)
+    return msg.includes('credits exhausted') || msg.includes('credit balance is too low')
+  })
+  if (fatalError) throw fatalError.reason
+
+  const fulfilled = results.filter((r): r is PromiseFulfilledResult<RawProduct[]> => r.status === 'fulfilled')
+  const allProducts = fulfilled.flatMap((r) => r.value)
+  console.log(`[Firecrawl] Total products scraped: ${allProducts.length} from ${fulfilled.length}/${NIEUW_PAGES.length} pages`)
   return allProducts
 }
 
@@ -317,27 +410,30 @@ Rules:
 - Return ALL ${batch.length} objects — sla geen enkel product over
 - Return ONLY the JSON array`
 
-  // Retry up to 3 times with 65s backoff on rate limit (429) errors
+  // Retry up to 3 times with backoff on rate limit (429) errors
   for (let attempt = 0; attempt < 3; attempt++) {
     if (attempt > 0) {
-      console.log(`[Claude] Batch ${globalOffset}: rate limited — waiting 65s before retry ${attempt}/2`)
-      await new Promise((resolve) => setTimeout(resolve, 65_000))
+      const waitSec = 30 * attempt // 30s, 60s
+      console.log(`[Claude] Batch ${globalOffset}: rate limited — waiting ${waitSec}s before retry ${attempt}/2`)
+      await new Promise((resolve) => setTimeout(resolve, waitSec * 1000))
     }
     let text: string
     try {
       const message = await anthropic.messages.create({
-        model: 'claude-sonnet-4-6',
+        model: 'claude-haiku-4-5-20251001',
         max_tokens: 16000,
         messages: [{ role: 'user', content: prompt }],
       })
       if (message.stop_reason === 'max_tokens') {
-        console.error(`[Claude] Batch ${globalOffset}: hit max_tokens limit — increase max_tokens or reduce SCORING_BATCH_SIZE`)
+        console.error(`[Claude] Batch ${globalOffset}: hit max_tokens limit — response truncated, will retry`)
+        if (attempt < 2) continue
+        // Last attempt: try to parse what we got anyway
       }
       text = message.content[0].type === 'text' ? message.content[0].text.trim() : ''
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      if (msg.includes('429') && attempt < 2) {
-        console.warn(`[Claude] Batch ${globalOffset}: 429 rate limited (attempt ${attempt + 1}/3)`)
+      if ((msg.includes('429') || msg.includes('529')) && attempt < 2) {
+        console.warn(`[Claude] Batch ${globalOffset}: rate limited (attempt ${attempt + 1}/3)`)
         continue
       }
       throw err
@@ -377,7 +473,7 @@ async function runPrediction(): Promise<ProductPrediction[]> {
   ])
 
   if (allProducts.length === 0) {
-    throw new Error('Firecrawl scrapers returned 0 products — Action.com may be blocking or Firecrawl quota exceeded')
+    throw new Error('No products scraped from Action.com. Check server logs — possible causes: Anthropic credits exhausted, Firecrawl blocked by Cloudflare, or page structure changed.')
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -402,25 +498,27 @@ async function runPrediction(): Promise<ProductPrediction[]> {
     batches.push(allProducts.slice(i, i + SCORING_BATCH_SIZE))
   }
 
+  // Score batches with limited concurrency (SCORING_CONCURRENCY at a time)
   const allScoredItems: ScoredItem[] = []
   const batchErrors: string[] = []
-  for (let bi = 0; bi < batches.length; bi++) {
-    try {
-      console.log(`[Claude] Scoring batch ${bi + 1}/${batches.length} (products ${bi * SCORING_BATCH_SIZE}–${Math.min((bi + 1) * SCORING_BATCH_SIZE - 1, allProducts.length - 1)})`)
-      const items = await scoreBatch(
-        batches[bi],
-        bi * SCORING_BATCH_SIZE,
-        redditSummary,
-        tiktokSummary,
-        fbSummary,
-        liveTrendSummary,
-        seasonHint
-      )
-      allScoredItems.push(...items)
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      console.error(`[Claude] Scoring batch ${bi} failed:`, msg)
-      batchErrors.push(`Batch ${bi}: ${msg}`)
+  for (let start = 0; start < batches.length; start += SCORING_CONCURRENCY) {
+    const chunk = batches.slice(start, start + SCORING_CONCURRENCY)
+    const results = await Promise.allSettled(
+      chunk.map((batch, ci) => {
+        const bi = start + ci
+        console.log(`[Claude] Scoring batch ${bi + 1}/${batches.length} (products ${bi * SCORING_BATCH_SIZE}–${Math.min((bi + 1) * SCORING_BATCH_SIZE - 1, allProducts.length - 1)})`)
+        return scoreBatch(batch, bi * SCORING_BATCH_SIZE, redditSummary, tiktokSummary, fbSummary, liveTrendSummary, seasonHint)
+      })
+    )
+    for (let ci = 0; ci < results.length; ci++) {
+      const r = results[ci]
+      if (r.status === 'fulfilled') {
+        allScoredItems.push(...r.value)
+      } else {
+        const msg = r.reason instanceof Error ? r.reason.message : String(r.reason)
+        console.error(`[Claude] Scoring batch ${start + ci} failed:`, msg)
+        batchErrors.push(`Batch ${start + ci}: ${msg}`)
+      }
     }
   }
 
@@ -473,10 +571,23 @@ async function runPrediction(): Promise<ProductPrediction[]> {
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url)
   const forceRefresh = searchParams.get('refresh') === '1'
+  const cacheOnly = searchParams.get('cacheOnly') === '1'
 
+  // Fast path: just return cached data without running the pipeline
+  if (cacheOnly) {
+    const cached = await loadCache()
+    if (cached) {
+      return NextResponse.json({ predictions: cached.predictions, cached: true, cachedAt: cached.cachedAt })
+    }
+    return NextResponse.json({ predictions: [], cached: false, cachedAt: null })
+  }
+
+  console.log('[TrendPredict] Starting — getting Supabase row count...')
   const currentCount = await getSupabaseRowCount()
+  console.log(`[TrendPredict] Row count: ${currentCount}`)
 
   if (!forceRefresh) {
+    console.log('[TrendPredict] Checking cache...')
     const cached = await loadCache()
     if (cached) {
       const age = Date.now() - new Date(cached.cachedAt).getTime()
@@ -494,12 +605,19 @@ export async function GET(req: Request) {
 
   try {
     const predictions = await runPrediction()
-    await saveCache({ cachedAt: new Date().toISOString(), predictions, supabaseRowCount: currentCount })
+    // Save cache — don't let cache failure break the response
+    try {
+      await saveCache({ cachedAt: new Date().toISOString(), predictions, supabaseRowCount: currentCount })
+    } catch (cacheErr) {
+      console.warn('[TrendPredict] Failed to save cache (non-fatal):', cacheErr instanceof Error ? cacheErr.message : String(cacheErr))
+    }
     return NextResponse.json({ predictions, cached: false, cachedAt: new Date().toISOString() })
   } catch (err) {
-    console.error('[TrendPredict] Error:', err)
+    const errMsg = err instanceof Error ? err.message : String(err)
+    const errStack = err instanceof Error ? err.stack : undefined
+    console.error('[TrendPredict] Error:', errMsg, errStack)
     return NextResponse.json(
-      { error: 'Er is een fout opgetreden bij het genereren van voorspellingen.', predictions: [] },
+      { error: errMsg, predictions: [] },
       { status: 500 }
     )
   }

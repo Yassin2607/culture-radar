@@ -14,7 +14,9 @@ async function generateWithRetry(
       return await model.generateContent(parts) as never
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
-      const is429 = msg.includes('429') || msg.includes('Too Many Requests') || msg.includes('quota')
+      const isAuthError = msg.includes('401') || msg.includes('403') || msg.includes('API key')
+      if (isAuthError) throw err
+      const is429 = msg.includes('429') || msg.includes('Too Many Requests') || msg.includes('quota') || msg.includes('503')
       if (is429 && attempt < retries) {
         const retryMatch = msg.match(/retry.*?(\d+)s/i)
         const waitMs = retryMatch ? parseInt(retryMatch[1]) * 1000 : Math.min(30000, 5000 * Math.pow(2, attempt))
@@ -114,7 +116,7 @@ export async function analyzeCopy(
         mimeType: 'application/pdf',
       },
     },
-    `${PROMPT}\n\nCopy to check:\n"""\n${copyText}\n"""`,
+    `${PROMPT}\n\nCopy to check:\n"""\n${copyText.replace(/"""/g, '\\"\\"\\\"')}\n"""`,
   ])
 
   const rawText = result.response.text()

@@ -58,6 +58,33 @@ export const sessionStore = {
     await supabaseAdmin.from('scan_sessions').update(dbPatch).eq('id', id)
   },
 
+  async appendResult(id: string, result: unknown): Promise<void> {
+    // Atomic append: uses Supabase's raw SQL via rpc to avoid read-modify-write races.
+    // Falls back to concatenation if rpc is unavailable.
+    const { error } = await supabaseAdmin.rpc('append_scan_result', {
+      session_id: id,
+      new_result: JSON.stringify(result),
+    })
+    if (error) {
+      // Fallback: non-atomic but still works for low concurrency
+      console.warn('[SessionStore] RPC append_scan_result unavailable, using fallback:', error.message)
+      const { data } = await supabaseAdmin
+        .from('scan_sessions')
+        .select('results, processed')
+        .eq('id', id)
+        .single()
+      if (data) {
+        const results = Array.isArray(data.results) ? data.results : []
+        await supabaseAdmin
+          .from('scan_sessions')
+          .update({ results: [...results, result], processed: (data.processed ?? 0) + 1 })
+          .eq('id', id)
+      }
+      return
+    }
+    // RPC also increments processed, so no separate update needed
+  },
+
   async delete(id: string): Promise<void> {
     await supabaseAdmin.from('scan_sessions').delete().eq('id', id)
   },
@@ -69,5 +96,14 @@ export const sessionStore = {
       .eq('id', id)
       .single()
     return !!data
+  },
+
+  /** Delete sessions older than 24 hours. Called opportunistically on new session creation. */
+  async cleanupExpired(): Promise<void> {
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+    await supabaseAdmin
+      .from('scan_sessions')
+      .delete()
+      .lt('created_at', cutoff)
   },
 }

@@ -136,7 +136,9 @@ async function generateWithRetry(
       return await model.generateContent(parts) as never
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
-      const is429 = msg.includes('429') || msg.includes('Too Many Requests') || msg.includes('quota')
+      const isAuthError = msg.includes('401') || msg.includes('403') || msg.includes('API key')
+      if (isAuthError) throw err
+      const is429 = msg.includes('429') || msg.includes('Too Many Requests') || msg.includes('quota') || msg.includes('503')
       if (is429 && attempt < retries) {
         // Extract retry delay from error or use exponential backoff
         const retryMatch = msg.match(/retry.*?(\d+)s/i)
