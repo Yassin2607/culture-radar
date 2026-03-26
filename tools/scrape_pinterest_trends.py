@@ -100,6 +100,125 @@ def scrape_trends(region: str) -> dict:
                 except Exception:
                     continue
 
+            # ── Region selection ──
+            # Map input region codes to the label shown in the Pinterest dropdown
+            region_map = {
+                "NL": "Benelux",
+                "BENELUX": "Benelux",
+                "US": None,       # US is the default, no action needed
+                "UK": "United Kingdom",
+                "DE": "Germany",
+                "FR": "France",
+            }
+            target_region_label = region_map.get(region.upper(), region) if region else None
+
+            if target_region_label:
+                region_selected = False
+                try:
+                    # Strategy 1: Look for a country/region dropdown button by data-test-id
+                    dropdown_selectors = [
+                        "[data-test-id*='country'] button",
+                        "[data-test-id*='region'] button",
+                        "[data-test-id*='country-picker']",
+                        "[data-test-id*='region-picker']",
+                        "[data-test-id*='geo']",
+                        "[data-test-id*='location']",
+                        "button[data-test-id*='country']",
+                        "button[data-test-id*='region']",
+                    ]
+                    for sel in dropdown_selectors:
+                        try:
+                            el = page.locator(sel).first
+                            if el.is_visible(timeout=2000):
+                                el.click(timeout=3000)
+                                page.wait_for_timeout(1500)
+                                # Try to click the target region in the opened dropdown
+                                option = page.locator(f"text={target_region_label}").first
+                                if option.is_visible(timeout=2000):
+                                    option.click(timeout=3000)
+                                    page.wait_for_timeout(3000)
+                                    region_selected = True
+                                break
+                        except Exception:
+                            continue
+
+                    # Strategy 2: Look for a button/link containing default region text
+                    if not region_selected:
+                        default_labels = ["United States", "US", "Worldwide"]
+                        for label in default_labels:
+                            try:
+                                btn = page.locator(f"button:has-text('{label}')").first
+                                if btn.is_visible(timeout=2000):
+                                    btn.click(timeout=3000)
+                                    page.wait_for_timeout(1500)
+                                    option = page.locator(f"text={target_region_label}").first
+                                    if option.is_visible(timeout=2000):
+                                        option.click(timeout=3000)
+                                        page.wait_for_timeout(3000)
+                                        region_selected = True
+                                    break
+                            except Exception:
+                                continue
+
+                    # Strategy 3: Look for a <select> element with region options
+                    if not region_selected:
+                        try:
+                            select_el = page.locator("select").first
+                            if select_el.is_visible(timeout=2000):
+                                # Try selecting by visible label
+                                select_el.select_option(label=target_region_label, timeout=3000)
+                                page.wait_for_timeout(3000)
+                                region_selected = True
+                        except Exception:
+                            pass
+
+                    # URL code mapping (used by strategies 4 and 5)
+                    url_region_map = {
+                        "Benelux": "NL",
+                        "United Kingdom": "GB",
+                        "Germany": "DE",
+                        "France": "FR",
+                    }
+                    url_code = url_region_map.get(target_region_label, region.upper())
+
+                    # Strategy 4: Try URL-based region selection
+                    if not region_selected:
+                        try:
+                            page.goto(
+                                f"https://trends.pinterest.com/country/{url_code}",
+                                wait_until="networkidle",
+                                timeout=15000,
+                            )
+                            page.wait_for_timeout(2000)
+                            region_selected = True
+                        except Exception:
+                            pass
+
+                    # Strategy 5: Try query parameter approach
+                    if not region_selected:
+                        try:
+                            page.goto(
+                                f"https://trends.pinterest.com/?country={url_code}",
+                                wait_until="networkidle",
+                                timeout=15000,
+                            )
+                            page.wait_for_timeout(2000)
+                            region_selected = True
+                        except Exception:
+                            pass
+
+                    if not region_selected:
+                        errors.append(f"region_selection: could not select '{target_region_label}'")
+
+                except Exception as e:
+                    errors.append(f"region_selection: {e}")
+
+                # Save screenshot after region selection attempt
+                page.screenshot(
+                    path=os.path.join(tmp_dir, "pinterest-trends-after-region.png"),
+                    full_page=True,
+                )
+
             # Wait for dynamic content
             page.wait_for_timeout(3000)
 
