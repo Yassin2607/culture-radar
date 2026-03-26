@@ -100,120 +100,33 @@ def scrape_trends(region: str) -> dict:
                 except Exception:
                     continue
 
-            # ── Region selection ──
-            # Map input region codes to the label shown in the Pinterest dropdown
-            region_map = {
-                "NL": "Benelux",
-                "BENELUX": "Benelux",
-                "US": None,       # US is the default, no action needed
-                "UK": "United Kingdom",
-                "DE": "Germany",
-                "FR": "France",
+            # ── Region selection via <select> dropdown ──
+            # Pinterest Trends has a <select> element with region options.
+            # Values: "US" (default), "NL+BE+LU" (Benelux), "DE" (Germany), etc.
+            REGION_VALUES = {
+                "US": "US",
+                "BENELUX": "NL+BE+LU",
+                "NL": "NL+BE+LU",
+                "BE": "NL+BE+LU",
+                "UK": "GB+IE",
+                "GB": "GB+IE",
+                "DE": "DE",
+                "FR": "FR",
             }
-            target_region_label = region_map.get(region.upper(), region) if region else None
+            select_value = REGION_VALUES.get(region.upper(), region.upper())
 
-            if target_region_label:
-                region_selected = False
+            if select_value != "US":
                 try:
-                    # Strategy 1: Look for a country/region dropdown button by data-test-id
-                    dropdown_selectors = [
-                        "[data-test-id*='country'] button",
-                        "[data-test-id*='region'] button",
-                        "[data-test-id*='country-picker']",
-                        "[data-test-id*='region-picker']",
-                        "[data-test-id*='geo']",
-                        "[data-test-id*='location']",
-                        "button[data-test-id*='country']",
-                        "button[data-test-id*='region']",
-                    ]
-                    for sel in dropdown_selectors:
-                        try:
-                            el = page.locator(sel).first
-                            if el.is_visible(timeout=2000):
-                                el.click(timeout=3000)
-                                page.wait_for_timeout(1500)
-                                # Try to click the target region in the opened dropdown
-                                option = page.locator(f"text={target_region_label}").first
-                                if option.is_visible(timeout=2000):
-                                    option.click(timeout=3000)
-                                    page.wait_for_timeout(3000)
-                                    region_selected = True
-                                break
-                        except Exception:
-                            continue
-
-                    # Strategy 2: Look for a button/link containing default region text
-                    if not region_selected:
-                        default_labels = ["United States", "US", "Worldwide"]
-                        for label in default_labels:
-                            try:
-                                btn = page.locator(f"button:has-text('{label}')").first
-                                if btn.is_visible(timeout=2000):
-                                    btn.click(timeout=3000)
-                                    page.wait_for_timeout(1500)
-                                    option = page.locator(f"text={target_region_label}").first
-                                    if option.is_visible(timeout=2000):
-                                        option.click(timeout=3000)
-                                        page.wait_for_timeout(3000)
-                                        region_selected = True
-                                    break
-                            except Exception:
-                                continue
-
-                    # Strategy 3: Look for a <select> element with region options
-                    if not region_selected:
-                        try:
-                            select_el = page.locator("select").first
-                            if select_el.is_visible(timeout=2000):
-                                # Try selecting by visible label
-                                select_el.select_option(label=target_region_label, timeout=3000)
-                                page.wait_for_timeout(3000)
-                                region_selected = True
-                        except Exception:
-                            pass
-
-                    # URL code mapping (used by strategies 4 and 5)
-                    url_region_map = {
-                        "Benelux": "NL",
-                        "United Kingdom": "GB",
-                        "Germany": "DE",
-                        "France": "FR",
-                    }
-                    url_code = url_region_map.get(target_region_label, region.upper())
-
-                    # Strategy 4: Try URL-based region selection
-                    if not region_selected:
-                        try:
-                            page.goto(
-                                f"https://trends.pinterest.com/country/{url_code}",
-                                wait_until="networkidle",
-                                timeout=15000,
-                            )
-                            page.wait_for_timeout(2000)
-                            region_selected = True
-                        except Exception:
-                            pass
-
-                    # Strategy 5: Try query parameter approach
-                    if not region_selected:
-                        try:
-                            page.goto(
-                                f"https://trends.pinterest.com/?country={url_code}",
-                                wait_until="networkidle",
-                                timeout=15000,
-                            )
-                            page.wait_for_timeout(2000)
-                            region_selected = True
-                        except Exception:
-                            pass
-
-                    if not region_selected:
-                        errors.append(f"region_selection: could not select '{target_region_label}'")
-
+                    select_el = page.locator("select").first
+                    if select_el.is_visible(timeout=3000):
+                        select_el.select_option(value=select_value, timeout=3000)
+                        page.wait_for_timeout(5000)  # Wait for page to reload with new region data
+                    else:
+                        errors.append("region_selection: select element not found")
                 except Exception as e:
                     errors.append(f"region_selection: {e}")
 
-                # Save screenshot after region selection attempt
+                # Save screenshot after region selection
                 page.screenshot(
                     path=os.path.join(tmp_dir, "pinterest-trends-after-region.png"),
                     full_page=True,
@@ -229,6 +142,57 @@ def scrape_trends(region: str) -> dict:
             )
             with open(os.path.join(tmp_dir, "pinterest-trends-landing.html"), "w", encoding="utf-8") as f:
                 f.write(page.content())
+
+            # ── Section 0: Top trends carousel (Benelux/non-US regions) ──
+            # Non-US regions use "trends-top-trends-card-text" instead of "topic-card"
+            try:
+                top_trends = page.evaluate("""() => {
+                    const results = [];
+                    const cards = document.querySelectorAll('[data-test-id="trends-top-trends-card-text"]');
+                    cards.forEach(card => {
+                        const text = (card.innerText || '').trim();
+                        if (text) results.push({ keyword: text });
+                    });
+                    return results;
+                }""")
+                # Click carousel right arrow to reveal more items
+                for _ in range(3):
+                    try:
+                        arrow = page.locator('[data-test-id="top-trends-carousel-right-arrow"]').first
+                        if arrow.is_visible(timeout=1000):
+                            arrow.click(timeout=2000)
+                            page.wait_for_timeout(1000)
+                            more = page.evaluate("""() => {
+                                const results = [];
+                                document.querySelectorAll('[data-test-id="trends-top-trends-card-text"]').forEach(card => {
+                                    results.push({ keyword: (card.innerText || '').trim() });
+                                });
+                                return results;
+                            }""")
+                            for item in more:
+                                kw = item.get("keyword", "").strip()
+                                if kw and len(kw) > 1 and not any(t["keyword"] == kw for t in trends):
+                                    trends.append({
+                                        "keyword": kw,
+                                        "category": "popular",
+                                        "growth_raw": None,
+                                        "growth_pct": None,
+                                        "region": region,
+                                    })
+                    except Exception:
+                        break
+                for item in top_trends:
+                    kw = item.get("keyword", "").strip()
+                    if kw and len(kw) > 1:
+                        trends.append({
+                            "keyword": kw,
+                            "category": "popular",
+                            "growth_raw": None,
+                            "growth_pct": None,
+                            "region": region,
+                        })
+            except Exception as e:
+                errors.append(f"top_trends_carousel: {e}")
 
             # ── Section 1: Spotlight trends ("Trends in de schijnwerpers") ──
             try:

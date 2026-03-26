@@ -1727,8 +1727,9 @@ function RankingsTab() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<number | null>(null)
-  const [pinterestTrends, setPinterestTrends] = useState<Array<{ keyword: string; category: string; growth_raw: string | null; week: string }>>([])
+  const [pinterestTrends, setPinterestTrends] = useState<Array<{ keyword: string; category: string; growth_raw: string | null; week: string; region: string }>>([])
   const [pinterestLoading, setPinterestLoading] = useState(true)
+  const [pinterestRegion, setPinterestRegion] = useState<string>('all')
 
   useEffect(() => {
     // Try localStorage first (populated by HomeTab) for instant load
@@ -1805,8 +1806,10 @@ function RankingsTab() {
 
       {/* Pinterest Trends */}
       {!pinterestLoading && pinterestTrends.length > 0 && (() => {
+        const regions = Array.from(new Set(pinterestTrends.map(t => t.region).filter(Boolean)))
+        const filtered = pinterestRegion === 'all' ? pinterestTrends : pinterestTrends.filter(t => t.region === pinterestRegion)
         const grouped: Record<string, Array<{ keyword: string; growth_raw: string | null }>> = {}
-        for (const t of pinterestTrends) {
+        for (const t of filtered) {
           const cat = t.category
           if (!grouped[cat]) grouped[cat] = []
           grouped[cat].push({ keyword: t.keyword, growth_raw: t.growth_raw })
@@ -1814,9 +1817,24 @@ function RankingsTab() {
         return (
           <div className="rounded-xl border border-gray-200 bg-white p-5">
             <div className="flex items-center justify-between mb-3">
-              <p className="text-xs font-bold uppercase tracking-wider text-gray-400">Pinterest Trends NL</p>
-              {pinterestTrends[0]?.week && (
-                <span className="text-xs text-gray-400">{pinterestTrends[0].week}</span>
+              <div className="flex items-center gap-3">
+                <p className="text-xs font-bold uppercase tracking-wider text-gray-400">Pinterest Trends</p>
+                <div className="flex gap-1">
+                  <button
+                    onClick={() => setPinterestRegion('all')}
+                    className={`text-xs px-2 py-0.5 rounded-full transition-colors ${pinterestRegion === 'all' ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                  >Alles</button>
+                  {regions.map(r => (
+                    <button
+                      key={r}
+                      onClick={() => setPinterestRegion(r)}
+                      className={`text-xs px-2 py-0.5 rounded-full transition-colors ${pinterestRegion === r ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                    >{r === 'US' ? 'VS' : r === 'BENELUX' ? 'Benelux' : r}</button>
+                  ))}
+                </div>
+              </div>
+              {filtered[0]?.week && (
+                <span className="text-xs text-gray-400">{filtered[0].week}</span>
               )}
             </div>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
@@ -1824,11 +1842,11 @@ function RankingsTab() {
                 <div key={cat}>
                   <p className="text-xs font-semibold text-gray-700 mb-1.5 capitalize">{cat.replace(/-/g, ' ')}</p>
                   <div className="flex flex-wrap gap-1">
-                    {items.slice(0, 6).map((item, j) => (
+                    {items.slice(0, 8).map((item, j) => (
                       <span key={j} className="inline-flex items-center gap-1 text-xs bg-red-50 text-red-700 px-2 py-0.5 rounded-full">
                         {item.keyword}
                         {item.growth_raw && (
-                          <span className="text-red-400 text-[10px]">{item.growth_raw.split('•')[0].trim()}</span>
+                          <span className="text-red-400 text-[10px]">{item.growth_raw.split('|')[0].trim()}</span>
                         )}
                       </span>
                     ))}
