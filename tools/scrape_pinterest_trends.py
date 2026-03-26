@@ -301,7 +301,6 @@ def scrape_trends(region: str) -> dict:
             # The second <select> on the page filters spotlight trends by interest.
             INTEREST_FILTERS = {
                 "architectuur":           "918105274631",
-                "bruiloft":               "903260720461",
                 "doe-het-zelf en knutselen": "934876475639",
                 "eten en drinken":        "918530398158",
                 "evenementenplanning":    "941870572865",
