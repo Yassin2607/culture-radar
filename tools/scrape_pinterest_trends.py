@@ -1,0 +1,344 @@
+#!/usr/bin/env python3
+"""
+Pinterest Trends scraper — WAT Layer 3 Tool
+
+Scrapes trending search terms from trends.pinterest.com for a given region.
+
+Note: Pinterest Trends renders all data on a single page (no per-category sub-pages).
+The `categories` parameter from the original spec was removed after exploratory discovery.
+
+All trend data lives on the single landing page in distinct sections:
+  - "Trends in de schijnwerpers" (spotlight) — via [data-test-id="topic-card"]
+  - "Winkeltrends" (shopping) — via [data-test-id*="product-category-card"]
+  - "Trends zoeken" (search keywords) — via [data-test-id*="trends-keyword-preview-table-row-term"]
+  - "Keuze van de redactie" (editorial picks) — via [data-test-id*="trend-pill"]
+
+Usage:
+    python3 scrape_pinterest_trends.py '{"region": "NL"}'
+
+Output (stdout):
+    {"trends": [...], "scrapedAt": "...", "count": N, "debug": {...}}
+"""
+
+import sys
+import json
+import os
+import re
+from datetime import datetime, timezone
+from typing import Optional
+
+
+def get_iso_week() -> str:
+    now = datetime.now(timezone.utc)
+    year, week, _ = now.isocalendar()
+    return f"{year}-W{week:02d}"
+
+
+def parse_growth(growth_str: str) -> Optional[float]:
+    """Parse growth strings like '+150%', '1.000%', '-20%' into numeric values."""
+    if not growth_str:
+        return None
+    # Remove thousand separators (dots in NL locale)
+    cleaned = growth_str.replace(".", "").replace(",", ".")
+    match = re.search(r'([+-]?\d+)', cleaned)
+    if match:
+        return float(match.group(1))
+    return None
+
+
+def scrape_trends(region: str) -> dict:
+    try:
+        from playwright.sync_api import sync_playwright, TimeoutError as PWTimeoutError
+    except ImportError:
+        return {"trends": [], "count": 0, "error": "playwright_not_installed"}
+
+    trends = []
+    errors = []
+    tmp_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".tmp")
+    os.makedirs(tmp_dir, exist_ok=True)
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(
+                user_agent=(
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/121.0.0.0 Safari/537.36"
+                ),
+                locale="nl-NL",
+                extra_http_headers={"Accept-Language": "nl-NL,nl;q=0.9,en;q=0.8"},
+            )
+            page = context.new_page()
+
+            # Navigate to Pinterest Trends landing page (all data is here)
+            try:
+                page.goto("https://trends.pinterest.com", wait_until="networkidle", timeout=30000)
+            except PWTimeoutError:
+                pass  # Page may still have content
+            except Exception as e:
+                browser.close()
+                return {"trends": [], "count": 0, "error": f"navigation_failed: {e}"}
+
+            # Dismiss cookie banner
+            cookie_selectors = [
+                "button[data-testid='cookie-accept']",
+                "button:has-text('Accept')",
+                "button:has-text('Accepteren')",
+                "button:has-text('Alle accepteren')",
+                "button:has-text('Accept all')",
+                "[id*='onetrust-accept']",
+                "[class*='cookie'] button",
+            ]
+            for selector in cookie_selectors:
+                try:
+                    btn = page.locator(selector).first
+                    if btn.is_visible(timeout=2000):
+                        btn.click(timeout=3000)
+                        page.wait_for_timeout(1000)
+                        break
+                except Exception:
+                    continue
+
+            # Wait for dynamic content
+            page.wait_for_timeout(3000)
+
+            # Save debug screenshot and HTML
+            page.screenshot(
+                path=os.path.join(tmp_dir, "pinterest-trends-landing.png"),
+                full_page=True,
+            )
+            with open(os.path.join(tmp_dir, "pinterest-trends-landing.html"), "w", encoding="utf-8") as f:
+                f.write(page.content())
+
+            # ── Section 1: Spotlight trends ("Trends in de schijnwerpers") ──
+            try:
+                spotlight = page.evaluate("""() => {
+                    const results = [];
+                    const cards = document.querySelectorAll('[data-test-id="topic-card"]');
+                    cards.forEach(card => {
+                        const lines = (card.innerText || '').split('\\n').map(l => l.trim()).filter(Boolean);
+                        // lines[0] = rank number, lines[1] = keyword, lines[2+] = growth + category
+                        if (lines.length >= 2) {
+                            const keyword = lines[1];
+                            let growth = null;
+                            let category = null;
+                            for (const line of lines.slice(2)) {
+                                if (line.includes('%') || line.includes('MoM')) {
+                                    growth = line;
+                                }
+                                // Category label from interest-name elements
+                                const catEl = card.querySelector('[data-test-id*="interest-name"]');
+                                if (catEl) category = catEl.getAttribute('data-test-id').replace('interest-name-', '');
+                            }
+                            // Fallback: look for category in text
+                            if (!category) {
+                                const lastLine = lines[lines.length - 1];
+                                if (lastLine && !lastLine.includes('%') && !lastLine.includes('MoM')) {
+                                    category = lastLine;
+                                }
+                            }
+                            results.push({ keyword, growth, category });
+                        }
+                    });
+                    return results;
+                }""")
+                for item in spotlight:
+                    kw = item.get("keyword", "").strip()
+                    if kw and len(kw) > 2:
+                        growth_raw = item.get("growth")
+                        trends.append({
+                            "keyword": kw,
+                            "category": item.get("category") or "spotlight",
+                            "growth_raw": growth_raw,
+                            "growth_pct": parse_growth(growth_raw) if growth_raw else None,
+                            "region": region,
+                        })
+            except Exception as e:
+                errors.append(f"spotlight: {e}")
+
+            # ── Section 2: Shopping trends ("Winkeltrends") ──
+            try:
+                shopping = page.evaluate("""() => {
+                    const results = [];
+                    const cards = document.querySelectorAll('[data-test-id*="product-category-card"]');
+                    cards.forEach(card => {
+                        const lines = (card.innerText || '').split('\\n').map(l => l.trim()).filter(Boolean);
+                        // Heading is inside an h3; growth is nearby
+                        const h3 = card.querySelector('h3');
+                        const keyword = h3 ? h3.innerText.trim() : (lines[0] || '');
+                        let growth = null;
+                        const growthEl = card.querySelector('[data-test-id="OUTBOUND_CLICK-growth-summary"]');
+                        if (growthEl) {
+                            growth = growthEl.innerText.trim();
+                        } else {
+                            for (const line of lines) {
+                                if (line.includes('%') && line.includes('MoM')) {
+                                    growth = line;
+                                    break;
+                                }
+                            }
+                        }
+                        if (keyword) results.push({ keyword, growth });
+                    });
+                    return results;
+                }""")
+                for item in shopping:
+                    kw = item.get("keyword", "").strip()
+                    if kw and len(kw) > 2:
+                        growth_raw = item.get("growth")
+                        trends.append({
+                            "keyword": kw,
+                            "category": "shopping",
+                            "growth_raw": growth_raw,
+                            "growth_pct": parse_growth(growth_raw) if growth_raw else None,
+                            "region": region,
+                        })
+            except Exception as e:
+                errors.append(f"shopping: {e}")
+
+            # ── Section 3: Search keyword trends ("Trends zoeken") ──
+            try:
+                search_trends = page.evaluate("""() => {
+                    const results = [];
+                    const termCells = document.querySelectorAll('[data-test-id="trends-keyword-preview-table-row-term"]');
+                    const weeklyCells = document.querySelectorAll('[data-test-id="trends-keyword-preview-table-row-wow"]');
+                    const monthlyCells = document.querySelectorAll('[data-test-id="trends-keyword-preview-table-row-mom"]');
+                    const yearlyCells = document.querySelectorAll('[data-test-id="trends-keyword-preview-table-row-yoy"]');
+
+                    termCells.forEach((cell, i) => {
+                        const keyword = (cell.innerText || '').trim();
+                        const wow = i < weeklyCells.length ? (weeklyCells[i].innerText || '').trim() : null;
+                        const mom = i < monthlyCells.length ? (monthlyCells[i].innerText || '').trim() : null;
+                        const yoy = i < yearlyCells.length ? (yearlyCells[i].innerText || '').trim() : null;
+                        if (keyword) results.push({ keyword, wow, mom, yoy });
+                    });
+                    return results;
+                }""")
+                for item in search_trends:
+                    kw = item.get("keyword", "").strip()
+                    if kw and len(kw) > 2:
+                        mom = item.get("mom")
+                        wow = item.get("wow")
+                        yoy = item.get("yoy")
+                        # Combine MoM, WoW, and YoY into a single growth_raw string
+                        parts = []
+                        if mom:
+                            parts.append(f"MoM:{mom}")
+                        if wow:
+                            parts.append(f"WoW:{wow}")
+                        if yoy:
+                            parts.append(f"YoY:{yoy}")
+                        growth_raw = " | ".join(parts) if parts else None
+                        trends.append({
+                            "keyword": kw,
+                            "category": "search",
+                            "growth_raw": growth_raw,
+                            "growth_pct": parse_growth(mom) if mom else None,
+                            "region": region,
+                        })
+            except Exception as e:
+                errors.append(f"search: {e}")
+
+            # ── Section 4: Editorial picks ("Keuze van de redactie") ──
+            try:
+                editorial = page.evaluate("""() => {
+                    const results = [];
+                    const pills = document.querySelectorAll('[data-test-id*="trend-pill"]');
+                    pills.forEach(pill => {
+                        const testId = pill.getAttribute('data-test-id') || '';
+                        // data-test-id format: "trend-pill-frozen-yogurt-bark-+30%"
+                        const raw = testId.replace('trend-pill-', '');
+                        const text = (pill.innerText || '').trim();
+                        results.push({ keyword: text || raw, testId: raw });
+                    });
+
+                    // Also get editorial article titles
+                    const articles = document.querySelectorAll('[data-test-id*="trends-editorial-article"]');
+                    const seen = new Set();
+                    articles.forEach(article => {
+                        const testId = article.getAttribute('data-test-id') || '';
+                        if (testId.includes('tap-area')) return;  // skip tap-area duplicates
+                        const lines = (article.innerText || '').split('\\n').map(l => l.trim()).filter(Boolean);
+                        const title = lines[0] || '';
+                        if (title && !seen.has(title)) {
+                            seen.add(title);
+                            // Find associated category
+                            let category = null;
+                            for (const line of lines) {
+                                if (line.startsWith('Populair in')) {
+                                    category = lines[lines.indexOf(line) + 1] || null;
+                                    break;
+                                }
+                            }
+                            results.push({ keyword: title, category, isArticle: true });
+                        }
+                    });
+                    return results;
+                }""")
+                for item in editorial:
+                    kw = item.get("keyword", "").strip()
+                    if kw and len(kw) > 2:
+                        # Parse growth from pill keywords like "frozen yogurt bark +30%"
+                        growth_raw = None
+                        match = re.search(r'[+-]\d+%', kw)
+                        if match:
+                            growth_raw = match.group(0)
+                            kw = kw[:match.start()].strip()
+                        trends.append({
+                            "keyword": kw,
+                            "category": item.get("category") or "editorial",
+                            "growth_raw": growth_raw,
+                            "growth_pct": parse_growth(growth_raw) if growth_raw else None,
+                            "region": region,
+                        })
+            except Exception as e:
+                errors.append(f"editorial: {e}")
+
+            browser.close()
+
+    except Exception as e:
+        return {"trends": [], "count": 0, "error": str(e)}
+
+    result = {
+        "trends": trends,
+        "scrapedAt": datetime.now(timezone.utc).isoformat(),
+        "count": len(trends),
+        "week": get_iso_week(),
+        "region": region,
+        "debug": {
+            "screenshotDir": tmp_dir,
+            "errors": errors,
+            "sections": {
+                "spotlight": len([t for t in trends if t.get("category") == "spotlight"]),
+                "shopping": len([t for t in trends if t.get("category") == "shopping"]),
+                "search": len([t for t in trends if t.get("category") == "search"]),
+                "editorial": len([t for t in trends if t.get("category") == "editorial"]),
+            },
+        },
+    }
+
+    if len(trends) == 0:
+        result["error"] = "no_trends_extracted"
+
+    return result
+
+
+def main():
+    if len(sys.argv) < 2:
+        payload = {}
+    else:
+        try:
+            payload = json.loads(sys.argv[1])
+        except json.JSONDecodeError:
+            print(json.dumps({"trends": [], "count": 0, "error": "invalid_json"}))
+            sys.exit(1)
+
+    region = payload.get("region", "NL")
+
+    result = scrape_trends(region)
+    print(json.dumps(result, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    main()
