@@ -14,7 +14,8 @@ All trend data lives on the single landing page in distinct sections:
   - "Keuze van de redactie" (editorial picks) — via [data-test-id*="trend-pill"]
 
 Usage:
-    python3 scrape_pinterest_trends.py '{"region": "NL"}'
+    python3 scrape_pinterest_trends.py '{"region": "US"}'
+    python3 scrape_pinterest_trends.py '{"region": "BENELUX"}'
 
 Output (stdout):
     {"trends": [...], "scrapedAt": "...", "count": N, "debug": {...}}
@@ -417,7 +418,7 @@ def main():
             print(json.dumps({"trends": [], "count": 0, "error": "invalid_json"}))
             sys.exit(1)
 
-    region = payload.get("region", "NL")
+    region = payload.get("region", "US")
 
     result = scrape_trends(region)
     print(json.dumps(result, ensure_ascii=False))
