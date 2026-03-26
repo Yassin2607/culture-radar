@@ -112,6 +112,68 @@ function getSeasonHint(): string {
   return 'Autumn/Winter: Halloween, Sinterklaas, Christmas, and gezellig home decor are trending. Candles, textiles, and seasonal decoration peak now.'
 }
 
+function getCurrentISOWeek(): string {
+  const now = new Date()
+  const jan4 = new Date(now.getFullYear(), 0, 4)
+  const startOfWeek1 = new Date(jan4)
+  startOfWeek1.setDate(jan4.getDate() - ((jan4.getDay() + 6) % 7))
+  const diffMs = now.getTime() - startOfWeek1.getTime()
+  const weekNum = Math.floor(diffMs / (7 * 24 * 60 * 60 * 1000)) + 1
+  return `${now.getFullYear()}-W${String(weekNum).padStart(2, '0')}`
+}
+
+async function fetchPinterestTrends(): Promise<string> {
+  const currentWeek = getCurrentISOWeek()
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let data: any[] | null
+
+  // Try current week first (use supabaseAdmin to bypass RLS)
+  const current = await supabaseAdmin
+    .from('pinterest_trends')
+    .select('keyword, category, growth_raw')
+    .eq('region', 'NL')
+    .eq('week', currentWeek)
+    .order('growth_pct', { ascending: false, nullsFirst: false })
+    .limit(50)
+  data = current.data
+
+  // Fall back to most recent week if no data for current week
+  if (!data || data.length === 0) {
+    const fallback = await supabaseAdmin
+      .from('pinterest_trends')
+      .select('keyword, category, growth_raw, week')
+      .eq('region', 'NL')
+      .order('created_at', { ascending: false })
+      .limit(50)
+    data = fallback.data
+    if (data && data.length > 0) {
+      const week = data[0].week
+      console.log(`[Pinterest] No data for ${currentWeek}, falling back to ${week}`)
+    }
+  }
+
+  if (!data || data.length === 0) {
+    console.log('[Pinterest] No Pinterest trend data available')
+    return ''
+  }
+
+  // Group by category
+  const grouped: Record<string, string[]> = {}
+  for (const row of data) {
+    const cat = (row.category ?? 'other').toUpperCase().replace(/-/g, ' ')
+    if (!grouped[cat]) grouped[cat] = []
+    const entry = row.growth_raw ? `${row.keyword} (${row.growth_raw})` : row.keyword
+    grouped[cat].push(entry)
+  }
+
+  const lines = Object.entries(grouped)
+    .map(([cat, keywords]) => `${cat}: ${keywords.join(', ')}`)
+    .join('\n')
+
+  return lines
+}
+
 // ─── Live RSS Trend Fetching ──────────────────────────────────────────────────
 
 const RSS_SOURCES = [
@@ -345,7 +407,8 @@ async function scoreBatch(
   tiktokSummary: string,
   fbSummary: string,
   liveTrendSummary: string,
-  seasonHint: string
+  seasonHint: string,
+  pinterestSummary: string
 ): Promise<ScoredItem[]> {
   const catalog = batch.map((p, i) =>
     `${i}: "${p.productName ?? 'Unknown'}" — ${p.price != null ? `€${p.price}` : 'price unknown'}`
@@ -369,6 +432,9 @@ ${tiktokSummary || 'No data'}
 FACEBOOK (Action kopers groepen):
 ${fbSummary || 'No data'}
 
+PINTEREST TRENDS (planning intent — wat NL consumenten zoeken/pinnen):
+${pinterestSummary || 'No data'}
+
 ━━━ NIEUWE ACTION PRODUCTEN (${batch.length} stuks) ━━━
 ${catalog}
 
@@ -382,6 +448,8 @@ CRITERIA:
 4. CADEAU POTENTIE: Voor wie geschikt, bij welke gelegenheden?
 5. SEIZOEN RELEVANTIE: Hoe relevant nu in dit seizoen?
 6. VIRALE POTENTIE: Geschikt voor TikTok/Instagram/Facebook content? Welke formats?
+
+Weeg PINTEREST TRENDS mee: producten die aansluiten bij trending Pinterest zoektermen scoren hoger op SEIZOEN RELEVANTIE en VIRALE POTENTIE, omdat Pinterest-gebruikers actief plannen om deze producten te kopen of gebruiken.
 
 CONTENT CONCEPT (per product):
 - hook: pakkende Dutch TikTok opener (max 12 woorden, start met: POV, Wacht, Dit, Niemand, Ik, of een getal)
@@ -464,12 +532,13 @@ Rules:
 async function runPrediction(): Promise<ProductPrediction[]> {
   console.log('Fetching new Action products via Firecrawl + trend signals in parallel')
 
-  const [allProducts, redditResult, tiktokResult, fbResult, liveTrendSummary] = await Promise.all([
+  const [allProducts, redditResult, tiktokResult, fbResult, liveTrendSummary, pinterestSummary] = await Promise.all([
     scrapeNewArrivals(),
     supabase.from('redditdata').select('Titel, Beschrijving, Categorieën').limit(20),
     supabase.from('Tiktok Data Action').select('Caption, Views, Likes, Shares, Zoekterm, Tags').limit(80),
     supabase.from('FB data scraper').select('"Caption (text)", Likes, Comments, Shares, Groepsnaam, "Top comments"').limit(20),
     fetchLiveTrends(),
+    fetchPinterestTrends(),
   ])
 
   if (allProducts.length === 0) {
@@ -507,7 +576,7 @@ async function runPrediction(): Promise<ProductPrediction[]> {
       chunk.map((batch, ci) => {
         const bi = start + ci
         console.log(`[Claude] Scoring batch ${bi + 1}/${batches.length} (products ${bi * SCORING_BATCH_SIZE}–${Math.min((bi + 1) * SCORING_BATCH_SIZE - 1, allProducts.length - 1)})`)
-        return scoreBatch(batch, bi * SCORING_BATCH_SIZE, redditSummary, tiktokSummary, fbSummary, liveTrendSummary, seasonHint)
+        return scoreBatch(batch, bi * SCORING_BATCH_SIZE, redditSummary, tiktokSummary, fbSummary, liveTrendSummary, seasonHint, pinterestSummary)
       })
     )
     for (let ci = 0; ci < results.length; ci++) {
