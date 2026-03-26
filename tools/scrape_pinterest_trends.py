@@ -47,6 +47,24 @@ def parse_growth(growth_str: str) -> Optional[float]:
     return None
 
 
+def load_credentials() -> tuple[Optional[str], Optional[str]]:
+    """Load Pinterest credentials from .env.local"""
+    env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env.local")
+    email = None
+    password = None
+    try:
+        with open(env_path, "r") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("PINTEREST_EMAIL="):
+                    email = line.split("=", 1)[1]
+                elif line.startswith("PINTEREST_PASSWORD="):
+                    password = line.split("=", 1)[1]
+    except FileNotFoundError:
+        pass
+    return email, password
+
+
 def scrape_trends(region: str) -> dict:
     try:
         from playwright.sync_api import sync_playwright, TimeoutError as PWTimeoutError
@@ -55,6 +73,7 @@ def scrape_trends(region: str) -> dict:
 
     trends = []
     errors = []
+    logged_in = False
     tmp_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".tmp")
     os.makedirs(tmp_dir, exist_ok=True)
 
@@ -72,7 +91,37 @@ def scrape_trends(region: str) -> dict:
             )
             page = context.new_page()
 
-            # Navigate to Pinterest Trends landing page (all data is here)
+            # ── Login to Pinterest (optional, unlocks full search trends) ──
+            email, password = load_credentials()
+            if email and password:
+                try:
+                    page.goto("https://www.pinterest.com/login/", wait_until="networkidle", timeout=30000)
+                    page.wait_for_timeout(2000)
+
+                    # Fill email
+                    email_input = page.locator('input[name="id"], input[type="email"], #email').first
+                    email_input.fill(email, timeout=5000)
+
+                    # Fill password
+                    pw_input = page.locator('input[name="password"], input[type="password"], #password').first
+                    pw_input.fill(password, timeout=5000)
+
+                    # Click login button
+                    login_btn = page.locator('button[type="submit"], button:has-text("Inloggen"), button:has-text("Log in")').first
+                    login_btn.click(timeout=5000)
+                    page.wait_for_timeout(5000)
+
+                    # Check if login succeeded (redirected away from /login/)
+                    if "/login" not in page.url:
+                        logged_in = True
+                    else:
+                        page.screenshot(path=os.path.join(tmp_dir, "pinterest-login-failed.png"), full_page=True)
+                        errors.append("login: still on login page after attempt")
+                except Exception as e:
+                    errors.append(f"login: {e}")
+                    page.screenshot(path=os.path.join(tmp_dir, "pinterest-login-error.png"), full_page=True)
+
+            # Navigate to Pinterest Trends landing page
             try:
                 page.goto("https://trends.pinterest.com", wait_until="networkidle", timeout=30000)
             except PWTimeoutError:
@@ -132,6 +181,20 @@ def scrape_trends(region: str) -> dict:
                     path=os.path.join(tmp_dir, "pinterest-trends-after-region.png"),
                     full_page=True,
                 )
+
+            # ── If logged in, click "Zoektrends bekijken" to unlock full search trends ──
+            if logged_in:
+                try:
+                    view_btn = page.locator('[data-test-id="view-shopping-trends-button"]').first
+                    if view_btn.is_visible(timeout=3000):
+                        view_btn.click(timeout=5000)
+                        page.wait_for_timeout(5000)
+                        # Scroll down to load all results
+                        for _ in range(5):
+                            page.keyboard.press("End")
+                            page.wait_for_timeout(1000)
+                except Exception as e:
+                    errors.append(f"view_search_trends: {e}")
 
             # Wait for dynamic content
             page.wait_for_timeout(3000)
@@ -281,10 +344,30 @@ def scrape_trends(region: str) -> dict:
             except Exception as e:
                 errors.append(f"shopping: {e}")
 
-            # ── Section 3: Search keyword trends ("Trends zoeken") ──
+            # ── Section 3: Search keyword trends ("Trends zoeken" / "Populaire trefwoorden") ──
             try:
                 search_trends = page.evaluate("""() => {
                     const results = [];
+
+                    // Strategy A: Full table (logged in) — uses "trends-table-term" + <tr>/<td>
+                    const fullTerms = document.querySelectorAll('[data-test-id="trends-table-term"]');
+                    if (fullTerms.length > 0) {
+                        const rows = document.querySelectorAll('tr');
+                        rows.forEach(row => {
+                            const cells = row.querySelectorAll('td');
+                            if (cells.length >= 4) {
+                                const termEl = row.querySelector('[data-test-id="trends-table-term"]');
+                                const keyword = termEl ? termEl.innerText.trim() : cells[0].innerText.trim();
+                                const wow = cells[1] ? cells[1].innerText.trim() : null;
+                                const mom = cells[2] ? cells[2].innerText.trim() : null;
+                                const yoy = cells[3] ? cells[3].innerText.trim() : null;
+                                if (keyword) results.push({ keyword, wow, mom, yoy });
+                            }
+                        });
+                        return results;
+                    }
+
+                    // Strategy B: Preview table (not logged in) — uses "trends-keyword-preview-table-row-*"
                     const termCells = document.querySelectorAll('[data-test-id="trends-keyword-preview-table-row-term"]');
                     const weeklyCells = document.querySelectorAll('[data-test-id="trends-keyword-preview-table-row-wow"]');
                     const monthlyCells = document.querySelectorAll('[data-test-id="trends-keyword-preview-table-row-mom"]');
@@ -392,8 +475,10 @@ def scrape_trends(region: str) -> dict:
         "region": region,
         "debug": {
             "screenshotDir": tmp_dir,
+            "loggedIn": logged_in,
             "errors": errors,
             "sections": {
+                "popular": len([t for t in trends if t.get("category") == "popular"]),
                 "spotlight": len([t for t in trends if t.get("category") == "spotlight"]),
                 "shopping": len([t for t in trends if t.get("category") == "shopping"]),
                 "search": len([t for t in trends if t.get("category") == "search"]),
