@@ -39,6 +39,16 @@ export default function PromoRadarPage() {
     setStore(current)
   }
 
+  const handleConfirmMultiWeek = (productsByWeek: Record<number, string[]>, year: number, filename: string) => {
+    let current = store
+    for (const [weekStr, products] of Object.entries(productsByWeek)) {
+      const week = Number(weekStr)
+      if (week < 1 || week > 53) continue
+      current = addWeekToStore(current, products, week, year, filename)
+    }
+    setStore(current)
+  }
+
   const handleDelete = (week: number, year: number) => {
     const updated = deleteWeekFromStore(store, week, year)
     setStore(updated)
@@ -96,6 +106,7 @@ export default function PromoRadarPage() {
           <div className="xl:col-span-2">
             <UploadCard
               onConfirm={handleConfirm}
+              onConfirmMultiWeek={handleConfirmMultiWeek}
               existingWeekKeys={existingWeekKeys}
             />
           </div>

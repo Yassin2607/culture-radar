@@ -18,4 +18,10 @@ export interface ParsedWeekFile {
   week: number | null  // null if not detected from filename
   year: number
   filename: string
+  productsByWeek?: ProductsByWeek  // present when the sheet contains per-product week numbers
+}
+
+/** Product grouped by its promo week (extracted from the sheet's week column). */
+export interface ProductsByWeek {
+  [weekNumber: number]: string[]  // weekNumber → product numbers
 }

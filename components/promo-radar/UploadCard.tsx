@@ -11,16 +11,18 @@ interface UploadItem {
   detectedWeek: number | null
   week: string
   year: number
+  productsByWeek?: Record<number, string[]>
 }
 
 interface Props {
   onConfirm: (uploads: Array<{ products: string[]; week: number; year: number; filename: string }>) => void
   existingWeekKeys: string[]
+  onConfirmMultiWeek?: (productsByWeek: Record<number, string[]>, year: number, filename: string) => void
 }
 
 type State = 'idle' | 'parsing' | 'preview'
 
-export default function UploadCard({ onConfirm, existingWeekKeys }: Props) {
+export default function UploadCard({ onConfirm, existingWeekKeys, onConfirmMultiWeek }: Props) {
   const [uiState, setUiState] = useState<State>('idle')
   const [isDragging, setIsDragging] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -51,6 +53,7 @@ export default function UploadCard({ onConfirm, existingWeekKeys }: Props) {
         detectedWeek: r.week,
         week: r.week ? String(r.week) : '',
         year: r.year,
+        productsByWeek: r.productsByWeek,
       }))
       setPending(items)
       setUiState('preview')
@@ -79,6 +82,16 @@ export default function UploadCard({ onConfirm, existingWeekKeys }: Props) {
   }
 
   const handleConfirm = () => {
+    // Check if any item has multi-week data
+    const multiWeekItem = pending.find((item) => item.productsByWeek && Object.keys(item.productsByWeek).length > 0)
+    if (multiWeekItem && multiWeekItem.productsByWeek && onConfirmMultiWeek) {
+      onConfirmMultiWeek(multiWeekItem.productsByWeek, multiWeekItem.year, multiWeekItem.filename)
+      setUiState('idle')
+      setPending([])
+      setError(null)
+      return
+    }
+
     // Validate all rows
     for (const item of pending) {
       const w = parseInt(item.week, 10)
@@ -100,6 +113,7 @@ export default function UploadCard({ onConfirm, existingWeekKeys }: Props) {
   }
 
   const allValid = pending.length > 0 && pending.every((item) => {
+    if (item.productsByWeek && Object.keys(item.productsByWeek).length > 0) return true
     const w = parseInt(item.week, 10)
     return w >= 1 && w <= 53
   })
@@ -180,31 +194,39 @@ export default function UploadCard({ onConfirm, existingWeekKeys }: Props) {
                   </div>
 
                   {/* Week inputs */}
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="number"
-                      min={1}
-                      max={53}
-                      value={item.week}
-                      onChange={(e) => updateItem(item.id, { week: e.target.value })}
-                      placeholder="Week"
-                      className="w-20 text-sm font-bold border border-gray-300 rounded-lg px-3 py-1.5 focus:outline-none focus:border-gray-400"
-                    />
-                    <span className="text-sm text-gray-400">·</span>
-                    <input
-                      type="number"
-                      min={2020}
-                      max={2040}
-                      value={item.year}
-                      onChange={(e) => updateItem(item.id, { year: parseInt(e.target.value, 10) })}
-                      className="w-24 text-sm font-bold border border-gray-300 rounded-lg px-3 py-1.5 focus:outline-none focus:border-gray-400"
-                    />
-                    {weekMissing ? (
-                      <span className="text-xs text-orange-500">not detected — enter manually</span>
-                    ) : (
-                      <span className="text-xs text-green-600">✓ from filename</span>
-                    )}
-                  </div>
+                  {item.productsByWeek && Object.keys(item.productsByWeek).length > 0 ? (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-green-600">
+                        ✓ {Object.keys(item.productsByWeek).length} weeks detected from sheet (W{Math.min(...Object.keys(item.productsByWeek).map(Number))}–W{Math.max(...Object.keys(item.productsByWeek).map(Number))})
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min={1}
+                        max={53}
+                        value={item.week}
+                        onChange={(e) => updateItem(item.id, { week: e.target.value })}
+                        placeholder="Week"
+                        className="w-20 text-sm font-bold border border-gray-300 rounded-lg px-3 py-1.5 focus:outline-none focus:border-gray-400"
+                      />
+                      <span className="text-sm text-gray-400">·</span>
+                      <input
+                        type="number"
+                        min={2020}
+                        max={2040}
+                        value={item.year}
+                        onChange={(e) => updateItem(item.id, { year: parseInt(e.target.value, 10) })}
+                        className="w-24 text-sm font-bold border border-gray-300 rounded-lg px-3 py-1.5 focus:outline-none focus:border-gray-400"
+                      />
+                      {weekMissing ? (
+                        <span className="text-xs text-orange-500">not detected — enter manually</span>
+                      ) : (
+                        <span className="text-xs text-green-600">✓ from filename</span>
+                      )}
+                    </div>
+                  )}
 
                   {isReUpload && (
                     <p className="text-xs text-orange-600 bg-orange-50 border border-orange-200 rounded-lg px-3 py-1.5">
