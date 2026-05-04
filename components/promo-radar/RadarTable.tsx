@@ -126,7 +126,7 @@ export default function RadarTable({ products, productNames, allWeeks }: Props) 
               <th className="py-2.5 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider w-36">
                 Product #
               </th>
-              <th className="py-2.5 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+              <th className="py-2.5 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider w-52">
                 Product Name
               </th>
               <th className="py-2.5 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider w-24">
