@@ -56,7 +56,7 @@ export async function extractProductsByWeek(file: File): Promise<ProductsByWeek>
       // The first column contains the week number
       const weekCol = headers[0]
 
-      // For each product, track the highest week where Promo? = 1
+      // For each product, track the last (bottom-most) week where Promo? = 1
       const productWeekMap = new Map<string, number>()
 
       for (const row of rows) {
@@ -70,10 +70,8 @@ export async function extractProductsByWeek(file: File): Promise<ProductsByWeek>
         const matches = articleVal.match(PRODUCT_NUMBER_RE)
         if (matches) {
           for (const m of matches) {
-            const existing = productWeekMap.get(m)
-            if (!existing || weekVal > existing) {
-              productWeekMap.set(m, weekVal)
-            }
+            // Always overwrite — last row in the sheet wins
+            productWeekMap.set(m, weekVal)
           }
         }
       }
@@ -164,11 +162,25 @@ export function weekLabel(key: string): string {
 }
 
 /**
- * Returns the promo week key for today using the standard ISO week number.
+ * Returns the promo week key for today.
+ * Promo weeks run Wednesday–Tuesday, so Monday and Tuesday still belong
+ * to the previous promo week. We shift those days back to the Wednesday
+ * that opened the current promo period, then compute its ISO week number.
  */
 export function getCurrentWeekKey(): string {
   const now = new Date()
-  const utc = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()))
+  const dayOfWeek = now.getDay() // 0=Sun 1=Mon 2=Tue 3=Wed 4=Thu 5=Fri 6=Sat
+
+  // On Monday (1) or Tuesday (2), shift back to the Wednesday that started this promo period
+  // Mon → 5 days back, Tue → 6 days back
+  const d = new Date(now)
+  if (dayOfWeek === 1 || dayOfWeek === 2) {
+    const daysBack = (dayOfWeek - 3 + 7) % 7  // Mon→5, Tue→6
+    d.setDate(d.getDate() - daysBack)
+  }
+
+  // ISO week calculation on the adjusted date
+  const utc = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
   const dayNum = utc.getUTCDay() || 7
   utc.setUTCDate(utc.getUTCDate() + 4 - dayNum)
   const yearStart = new Date(Date.UTC(utc.getUTCFullYear(), 0, 1))
