@@ -4,7 +4,7 @@ import { weekKey } from './product-extractor'
 const STORAGE_KEY = 'promo-radar-store'
 
 export function emptyStore(): RadarStore {
-  return { products: {}, uploads: [] }
+  return { products: {}, productNames: {}, uploads: [] }
 }
 
 export function loadStore(): RadarStore {
@@ -12,7 +12,9 @@ export function loadStore(): RadarStore {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return emptyStore()
-    return JSON.parse(raw) as RadarStore
+    const parsed = JSON.parse(raw)
+    if (!parsed.productNames) parsed.productNames = {}
+    return parsed as RadarStore
   } catch {
     return emptyStore()
   }
@@ -32,6 +34,7 @@ export function addWeekToStore(
   week: number,
   year: number,
   filename: string,
+  productNames?: Record<string, string>,
 ): RadarStore {
   const key = weekKey(week, year)
 
@@ -84,7 +87,8 @@ export function addWeekToStore(
         weekKey(b.week, b.year).localeCompare(weekKey(a.week, a.year)),
       )
 
-  const updated: RadarStore = { products: updatedProducts, uploads: updatedUploads }
+  const updatedNames = { ...store.productNames, ...(productNames || {}) }
+  const updated: RadarStore = { products: updatedProducts, productNames: updatedNames, uploads: updatedUploads }
   saveStore(updated)
   return updated
 }
@@ -95,17 +99,19 @@ export function addWeekToStore(
 export function deleteWeekFromStore(store: RadarStore, week: number, year: number): RadarStore {
   const key = weekKey(week, year)
   const updatedProducts = { ...store.products }
+  const updatedNames = { ...store.productNames }
 
   for (const pn of Object.keys(updatedProducts)) {
     updatedProducts[pn] = updatedProducts[pn].filter((k) => k !== key)
     if (updatedProducts[pn].length === 0) {
       delete updatedProducts[pn]
+      delete updatedNames[pn]
     }
   }
 
   const updatedUploads = store.uploads.filter((u) => !(u.week === week && u.year === year))
 
-  const updated: RadarStore = { products: updatedProducts, uploads: updatedUploads }
+  const updated: RadarStore = { products: updatedProducts, productNames: updatedNames, uploads: updatedUploads }
   saveStore(updated)
   return updated
 }

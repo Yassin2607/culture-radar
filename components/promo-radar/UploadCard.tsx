@@ -12,12 +12,13 @@ interface UploadItem {
   week: string
   year: number
   productsByWeek?: Record<number, string[]>
+  productNames?: Record<string, string>
 }
 
 interface Props {
   onConfirm: (uploads: Array<{ products: string[]; week: number; year: number; filename: string }>) => void
   existingWeekKeys: string[]
-  onConfirmMultiWeek?: (productsByWeek: Record<number, string[]>, year: number, filename: string) => void
+  onConfirmMultiWeek?: (productsByWeek: Record<number, string[]>, year: number, filename: string, productNames?: Record<string, string>) => void
 }
 
 type State = 'idle' | 'parsing' | 'preview'
@@ -54,6 +55,7 @@ export default function UploadCard({ onConfirm, existingWeekKeys, onConfirmMulti
         week: r.week ? String(r.week) : '',
         year: r.year,
         productsByWeek: r.productsByWeek,
+        productNames: r.productNames,
       }))
       setPending(items)
       setUiState('preview')
@@ -85,7 +87,7 @@ export default function UploadCard({ onConfirm, existingWeekKeys, onConfirmMulti
     // Check if any item has multi-week data
     const multiWeekItem = pending.find((item) => item.productsByWeek && Object.keys(item.productsByWeek).length > 0)
     if (multiWeekItem && multiWeekItem.productsByWeek && onConfirmMultiWeek) {
-      onConfirmMultiWeek(multiWeekItem.productsByWeek, multiWeekItem.year, multiWeekItem.filename)
+      onConfirmMultiWeek(multiWeekItem.productsByWeek, multiWeekItem.year, multiWeekItem.filename, multiWeekItem.productNames)
       setUiState('idle')
       setPending([])
       setError(null)

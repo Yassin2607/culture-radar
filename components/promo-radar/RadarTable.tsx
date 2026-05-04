@@ -5,6 +5,7 @@ import { weekLabel, parseWeekKey, getCurrentWeekKey } from '@/lib/product-extrac
 
 interface Props {
   products: Record<string, string[]>  // productNumber → weekKeys[]
+  productNames: Record<string, string> // productNumber → name
   allWeeks: string[]                  // sorted list of all week keys
 }
 
@@ -22,7 +23,7 @@ const STATUS_CONFIG: Record<ProductStatus, { label: string; className: string; d
   finished: { label: 'Finished', className: 'bg-red-100 text-red-700',      dot: 'bg-red-400' },
 }
 
-export default function RadarTable({ products, allWeeks }: Props) {
+export default function RadarTable({ products, productNames, allWeeks }: Props) {
   const [search, setSearch] = useState('')
   const [filterWeek, setFilterWeek] = useState('')
   const [filterStatus, setFilterStatus] = useState<ProductStatus | ''>('')
@@ -31,7 +32,11 @@ export default function RadarTable({ products, allWeeks }: Props) {
 
   const rows = useMemo(() => {
     return Object.entries(products)
-      .filter(([pn]) => !search || pn.includes(search.trim()))
+      .filter(([pn]) => {
+        if (!search) return true
+        const q = search.trim().toLowerCase()
+        return pn.includes(q) || (productNames[pn] || '').toLowerCase().includes(q)
+      })
       .filter(([, weeks]) => !filterWeek || weeks.includes(filterWeek))
       .filter(([, weeks]) => !filterStatus || getStatus(weeks, currentWeekKey) === filterStatus)
       .sort((a, b) => {
@@ -63,7 +68,7 @@ export default function RadarTable({ products, allWeeks }: Props) {
 
         <input
           type="text"
-          placeholder="Search product number…"
+          placeholder="Search product number or name…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="text-xs border border-gray-300 rounded-lg px-3 py-1.5 w-52 focus:outline-none focus:border-gray-400"
@@ -121,6 +126,9 @@ export default function RadarTable({ products, allWeeks }: Props) {
               <th className="py-2.5 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider w-36">
                 Product #
               </th>
+              <th className="py-2.5 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                Product Name
+              </th>
               <th className="py-2.5 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider w-24">
                 Weeks
               </th>
@@ -146,6 +154,11 @@ export default function RadarTable({ products, allWeeks }: Props) {
                   <td className="py-2.5 px-4">
                     <span className="font-mono text-sm font-semibold text-gray-900">
                       {productNumber}
+                    </span>
+                  </td>
+                  <td className="py-2.5 px-4">
+                    <span className="text-sm text-gray-700">
+                      {productNames[productNumber] || '—'}
                     </span>
                   </td>
                   <td className="py-2.5 px-4">

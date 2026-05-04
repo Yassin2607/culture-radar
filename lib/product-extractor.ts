@@ -1,4 +1,4 @@
-import type { ParsedWeekFile, ProductsByWeek } from '@/types/promo'
+import type { ParsedWeekFile, ProductsByWeek, ProductNameMap } from '@/types/promo'
 
 const PRODUCT_NUMBER_RE = /\b\d{7}\b/g
 
@@ -37,7 +37,7 @@ export function parseWeekFromFilename(filename: string): { week: number | null; 
  *  If the sheet has "Article number", "Promo?" and a week column (first column),
  *  products are grouped by week. For duplicate article numbers, the last (highest)
  *  week where Promo? = 1 is used. Falls back to flat extraction for simple sheets. */
-export async function extractProductsByWeek(file: File): Promise<ProductsByWeek> {
+export async function extractProductsByWeek(file: File): Promise<{ byWeek: ProductsByWeek; names: ProductNameMap }> {
   const XLSX = await import('xlsx')
   const arrayBuffer = await file.arrayBuffer()
   const workbook = XLSX.read(arrayBuffer, { type: 'array', cellDates: false })
@@ -55,9 +55,12 @@ export async function extractProductsByWeek(file: File): Promise<ProductsByWeek>
     if (articleCol && promoCol) {
       // The first column contains the week number
       const weekCol = headers[0]
+      // Find name column (Translations NL)
+      const nameCol = headers.find((h) => /translations?\s*nl/i.test(h))
 
-      // For each product, track the last (bottom-most) week where Promo? = 1
+      // For each product, track the last (bottom-most) week and name where Promo? = 1
       const productWeekMap = new Map<string, number>()
+      const productNameMap: ProductNameMap = {}
 
       for (const row of rows) {
         const promoVal = String(row[promoCol]).trim()
@@ -72,6 +75,10 @@ export async function extractProductsByWeek(file: File): Promise<ProductsByWeek>
           for (const m of matches) {
             // Always overwrite — last row in the sheet wins
             productWeekMap.set(m, weekVal)
+            if (nameCol) {
+              const name = String(row[nameCol]).trim()
+              if (name && name !== '') productNameMap[m] = name
+            }
           }
         }
       }
@@ -86,7 +93,7 @@ export async function extractProductsByWeek(file: File): Promise<ProductsByWeek>
       for (const week of Object.keys(byWeek)) {
         byWeek[Number(week)].sort()
       }
-      return byWeek
+      return { byWeek, names: productNameMap }
     }
   }
 
@@ -122,25 +129,24 @@ export async function extractProductsByWeek(file: File): Promise<ProductsByWeek>
     }
   }
 
-  return { 0: Array.from(found).sort() }
+  return { byWeek: { 0: Array.from(found).sort() }, names: {} }
 }
 
 /** Parse an Excel file: extract products grouped by week. */
 export async function parseWeekFile(file: File): Promise<ParsedWeekFile> {
   const { year } = parseWeekFromFilename(file.name)
-  const byWeek = await extractProductsByWeek(file)
+  const { byWeek, names } = await extractProductsByWeek(file)
   const weeks = Object.keys(byWeek).map(Number).filter((w) => w > 0)
 
   if (weeks.length > 0) {
-    // Multi-week file: return all products with per-week info attached
     const allProducts = [...new Set(Object.values(byWeek).flat())].sort()
-    return { products: allProducts, week: null, year, filename: file.name, productsByWeek: byWeek }
+    return { products: allProducts, week: null, year, filename: file.name, productsByWeek: byWeek, productNames: names }
   }
 
   // Fallback single-week
   const products = byWeek[0] || []
   const { week } = parseWeekFromFilename(file.name)
-  return { products, week, year, filename: file.name }
+  return { products, week, year, filename: file.name, productNames: names }
 }
 
 /** Format a week+year pair as a sortable key, e.g. "2025-W08" */

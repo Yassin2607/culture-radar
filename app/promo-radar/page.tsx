@@ -9,7 +9,7 @@ import { weekKey } from '@/lib/product-extractor'
 import type { RadarStore } from '@/types/promo'
 
 export default function PromoRadarPage() {
-  const [store, setStore] = useState<RadarStore>({ products: {}, uploads: [] })
+  const [store, setStore] = useState<RadarStore>({ products: {}, productNames: {}, uploads: [] })
   const [isLoaded, setIsLoaded] = useState(false)
 
   // Load from localStorage on mount
@@ -39,12 +39,12 @@ export default function PromoRadarPage() {
     setStore(current)
   }
 
-  const handleConfirmMultiWeek = (productsByWeek: Record<number, string[]>, year: number, filename: string) => {
+  const handleConfirmMultiWeek = (productsByWeek: Record<number, string[]>, year: number, filename: string, productNames?: Record<string, string>) => {
     let current = store
     for (const [weekStr, products] of Object.entries(productsByWeek)) {
       const week = Number(weekStr)
       if (week < 1 || week > 53) continue
-      current = addWeekToStore(current, products, week, year, filename)
+      current = addWeekToStore(current, products, week, year, filename, productNames)
     }
     setStore(current)
   }
@@ -116,7 +116,7 @@ export default function PromoRadarPage() {
         </div>
 
         {/* Product radar table */}
-        <RadarTable products={store.products} allWeeks={allWeeks} />
+        <RadarTable products={store.products} productNames={store.productNames} allWeeks={allWeeks} />
       </div>
     </div>
   )
