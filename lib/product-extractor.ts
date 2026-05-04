@@ -57,6 +57,7 @@ export async function extractProductNumbers(file: File): Promise<string[]> {
 
     if (articleCol && promoCol) {
       // Structured mode: only include products where Promo? = 1
+      // No need for isLikelyProductNumber here — the Promo? column is the filter
       for (const row of rows) {
         const promoVal = String(row[promoCol]).trim()
         if (promoVal !== '1') continue
@@ -65,7 +66,7 @@ export async function extractProductNumbers(file: File): Promise<string[]> {
         const matches = articleVal.match(PRODUCT_NUMBER_RE)
         if (matches) {
           for (const m of matches) {
-            if (isLikelyProductNumber(m)) found.add(m)
+            found.add(m)
           }
         }
       }
