@@ -44,6 +44,48 @@ Product mix (all at extremely low prices):
 - Clothing basics
 
 Customer: cost-conscious families + young adults who love a good deal. They follow trends but only buy if it's affordable.
+
+CRITICAL: Action runs a TikTok BUSINESS ACCOUNT. Business accounts have legally
+restricted music access — they may ONLY use sounds from the TikTok Commercial
+Music Library (CML), TikTok's royalty-free pool, original sounds Action creates,
+or music for which Action has bought a sync license. Using regular pop/commercial
+music = automatic takedown and possible copyright claim. Action has been hit
+with a sound claim before; do not repeat the mistake.
+`.trim()
+
+/**
+ * Sound licensing classification rules used in the prompt. Kept as a constant
+ * so we can iterate the wording in one place.
+ */
+const SOUND_LICENSING_RULES = `
+SOUND LICENSING ASSESSMENT — apply this every time you pick a sound:
+
+SAFE (soundRisk = "safe") only when ALL of these hold:
+  - Royalty-free / public domain / Creative Commons (e.g. Kevin MacLeod,
+    Free Music Archive, incompetech.com tracks)
+  - OR explicitly known to be in the TikTok Commercial Music Library (CML)
+  - OR a TikTok-native generic sound (anonymous "original sound" with no
+    copyrighted music underneath)
+
+RISKY (soundRisk = "risky") for any of:
+  - Commercial pop / rap / dance music by a named artist or label
+    (Charli XCX, NSYNC, Rebecca Black, Michael Jackson, Armin van Buuren,
+    any chart song, sped-up remixes of chart songs, etc.)
+  - "Original sound by @creator" using a recognizable copyrighted song
+  - Anything where the rights aren't clearly cleared for commercial use
+
+UNKNOWN (soundRisk = "unknown") if you genuinely cannot tell.
+
+For soundWarning:
+  - SAFE: 1 short sentence confirming why it is safe ("Royalty-free under
+    Creative Commons" / "Available in TikTok Commercial Music Library")
+  - RISKY: 1 short, direct sentence Action's social team can act on, e.g.
+    "Commercial track — Action's business account cannot use it; either
+    swap to a CML alternative or do not post with this sound."
+  - UNKNOWN: "Verify in the TikTok Commercial Music Library before posting."
+
+If the suggestedSound is risky, also rewrite the contentAngle to make the
+post work WITHOUT specifying that exact sound (so the team has a backup).
 `.trim()
 
 export interface TrendingSoundContext {
@@ -91,6 +133,10 @@ ${ACTION_CONTEXT}
 
 ---
 
+${SOUND_LICENSING_RULES}
+
+---
+
 TREND TO ANALYZE:
 Name: ${trend.name}
 Category: ${trend.category}
@@ -107,12 +153,19 @@ the content angle, and explain in 1 short sentence WHY it fits. Use the EXACT na
 from the list. If no sound fits naturally (e.g. for a static aesthetic, an in-store
 moment, or a non-video format), return null — do not force it.
 
+Then for "soundRisk" and "soundWarning": apply the SOUND LICENSING ASSESSMENT
+rules above. If suggestedSound is null, return null for both. Default to "risky"
+when uncertain — Action would rather pass on a risky suggestion than get hit
+with another sound claim.
+
 Return ONLY valid JSON:
 {
   "actionRelevance": "1 concrete sentence: what this means for Action's products, content, or buying agenda",
   "productCategories": ["up to 3 specific Action product categories that connect, e.g. 'School supplies', 'Party decorations'"],
   "contentAngle": "One specific, executable social post idea for Action — describe the visual, the caption angle, or the product tie-in",
   "suggestedSound": "<exact sound name from list> — <1 short sentence why it fits>" or null,
+  "soundRisk": "safe" | "risky" | "unknown" or null,
+  "soundWarning": "1 short, action-oriented sentence for the social team" or null,
   "urgency": <integer 1-10, where 10 = act this week before it peaks>,
   "lifecycleStage": "<one of: emerging | growing | peak | saturating>",
   "whyNow": "1 sentence on the cultural or seasonal driver making this trend happen right now"
@@ -142,6 +195,31 @@ Return ONLY valid JSON:
       typeof ss === 'string' && ss.trim().length > 3 && ss.toLowerCase() !== 'null'
         ? ss.trim()
         : null
+
+    // Normalize sound risk fields. If there is no suggested sound, both go null.
+    if (!parsed.suggestedSound) {
+      parsed.soundRisk = null
+      parsed.soundWarning = null
+    } else {
+      const validRisks = ['safe', 'risky', 'unknown']
+      // Default to 'risky' when missing or invalid — safer for Action.
+      parsed.soundRisk = validRisks.includes(parsed.soundRisk as string)
+        ? parsed.soundRisk
+        : 'risky'
+      // soundWarning should be a non-empty string for risky/unknown cases.
+      const sw = (parsed as { soundWarning?: unknown }).soundWarning
+      parsed.soundWarning =
+        typeof sw === 'string' && sw.trim().length > 3 ? sw.trim() : null
+      // If we marked risky and the AI didn't include a warning, inject one.
+      if (parsed.soundRisk === 'risky' && !parsed.soundWarning) {
+        parsed.soundWarning =
+          "Likely commercial music — Action's business account cannot use it. Swap to a Commercial Music Library track or use original audio."
+      }
+      if (parsed.soundRisk === 'unknown' && !parsed.soundWarning) {
+        parsed.soundWarning =
+          'Licensing unclear — verify in the TikTok Commercial Music Library before posting.'
+      }
+    }
 
     return parsed
   } catch (err) {

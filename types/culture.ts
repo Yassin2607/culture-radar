@@ -45,11 +45,15 @@ export interface CultureSource {
   lastScrapeError: string | null
 }
 
+export type SoundLicenseRisk = 'safe' | 'risky' | 'unknown'
+
 export interface ActionBrief {
   actionRelevance: string       // Why this matters for Action specifically
   productCategories: string[]   // Max 3 Action product categories
   contentAngle: string          // Executable content idea for Action social
   suggestedSound: string | null // Concrete TikTok/Reels sound to use, with why
+  soundRisk: SoundLicenseRisk | null   // Licensing risk for the suggested sound
+  soundWarning: string | null   // Plain-language warning when the sound is risky
   urgency: number               // 1-10
   lifecycleStage: 'emerging' | 'growing' | 'peak' | 'saturating'
   whyNow: string                // The underlying cultural driver

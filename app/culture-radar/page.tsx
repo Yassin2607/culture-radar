@@ -892,14 +892,42 @@ function TrendRow({ trend, view }: { trend: CultureTrend; view: View }) {
               </p>
               <p className="text-xs text-gray-700">{brief.contentAngle}</p>
             </div>
-            {brief.suggestedSound && (
-              <div className="flex items-start gap-1.5 text-xs">
-                <span style={{ color: '#7c3aed' }}>♪</span>
-                <p className="text-gray-700">
-                  <span className="font-semibold text-gray-800">Sound:</span> {brief.suggestedSound}
-                </p>
-              </div>
-            )}
+            {brief.suggestedSound && (() => {
+              const risk = brief.soundRisk
+              const riskColor =
+                risk === 'safe'
+                  ? { bg: '#ecfdf5', text: '#047857', icon: '✓' }
+                  : risk === 'risky'
+                    ? { bg: '#fef2f2', text: '#b91c1c', icon: '⚠' }
+                    : { bg: '#fefce8', text: '#a16207', icon: '?' }
+              const riskLabel =
+                risk === 'safe' ? 'safe' : risk === 'risky' ? 'risky' : 'check'
+              return (
+                <div className="space-y-1">
+                  <div className="flex items-start gap-1.5 text-xs">
+                    <span style={{ color: '#7c3aed' }}>♪</span>
+                    <p className="text-gray-700 flex-1">
+                      <span className="font-semibold text-gray-800">Sound:</span> {brief.suggestedSound}
+                    </p>
+                    <span
+                      className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded"
+                      style={{ backgroundColor: riskColor.bg, color: riskColor.text }}
+                      title={brief.soundWarning ?? ''}
+                    >
+                      {riskColor.icon} {riskLabel}
+                    </span>
+                  </div>
+                  {brief.soundWarning && risk !== 'safe' && (
+                    <p
+                      className="text-[11px] leading-snug px-2 py-1 rounded"
+                      style={{ backgroundColor: riskColor.bg, color: riskColor.text }}
+                    >
+                      {brief.soundWarning}
+                    </p>
+                  )}
+                </div>
+              )
+            })()}
             {brief.productCategories?.length > 0 && (
               <div className="flex flex-wrap gap-1">
                 {brief.productCategories.map((cat) => (
