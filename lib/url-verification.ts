@@ -25,10 +25,47 @@ const REAL_BROWSER_UA =
 
 const DEFAULT_TIMEOUT_MS = 6000
 
+/**
+ * Heuristic: does this look like a hallucinated TikTok video ID?
+ * Real TikTok IDs are 19 digits of random distribution. Perplexity-
+ * fabricated IDs almost always contain a long run of sequential digits
+ * (1234567890123) or look unnaturally round.
+ */
+export function looksLikeFakeVideoId(id: string): boolean {
+  if (!/^\d+$/.test(id)) return true
+  if (id.length < 18 || id.length > 20) return true
+
+  // Sequential ascending run: 1234567890
+  let maxRun = 0
+  let run = 0
+  for (let i = 1; i < id.length; i++) {
+    if (id.charCodeAt(i) === id.charCodeAt(i - 1) + 1) {
+      run++
+      maxRun = Math.max(maxRun, run)
+    } else {
+      run = 0
+    }
+  }
+  if (maxRun >= 5) return true
+
+  // "01234567890" substring anywhere — classic hallucination signature
+  if (/01234567890|12345678901|23456789012|34567890123|45678901234/.test(id)) {
+    return true
+  }
+
+  return false
+}
+
 export async function verifyVideoUrl(
   url: string,
   timeoutMs = DEFAULT_TIMEOUT_MS,
 ): Promise<VerifyResult> {
+  // Cheap pattern check first — skip the network call if the ID is obviously fabricated.
+  const tiktokMatch = url.match(/tiktok\.com\/(?:@[\w.-]+\/)?(?:video|photo)\/(\d+)/i)
+  if (tiktokMatch && looksLikeFakeVideoId(tiktokMatch[1])) {
+    return { url, ok: false, reason: 'tiktok_id_looks_fabricated' }
+  }
+
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
