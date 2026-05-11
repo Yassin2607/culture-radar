@@ -206,7 +206,7 @@ export async function GET(req: NextRequest) {
       const mindmapReq = new NextRequest(new URL('http://internal/api/culture/enrich-mindmaps'), {
         method: 'POST',
         headers: { authorization: expectedBearer, 'content-type': 'application/json' },
-        body: JSON.stringify({ limit: 12 }),
+        body: JSON.stringify({ limit: 40 }),
       })
       const r = await enrichMindmapsHandler(mindmapReq)
       const d = (await r.json()) as { enriched?: number }

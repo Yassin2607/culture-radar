@@ -22,7 +22,7 @@ interface Row {
   hashtags: string[] | null
 }
 
-const CONCURRENCY = 3
+const CONCURRENCY = 5
 
 export async function POST(req: NextRequest) {
   const started = Date.now()
@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
     /* empty */
   }
 
-  const limit = Math.min(40, Math.max(1, body.limit ?? 12))
+  const limit = Math.min(80, Math.max(1, body.limit ?? 12))
   const filter = body.force ? '' : 'AND mindmap IS NULL'
 
   const rows = (await sql().query(
@@ -66,9 +66,11 @@ export async function POST(req: NextRequest) {
           failed++
           continue
         }
-        // Only save if we got at least 2 sections with content
+        // Save if we got at least 1 section with content. Niche trends
+        // sometimes only get an origin or a spreading bullet — better to
+        // show partial context than nothing.
         const filled = Object.values(mm).filter((arr) => arr.length > 0).length
-        if (filled < 2) {
+        if (filled < 1) {
           failed++
           continue
         }
