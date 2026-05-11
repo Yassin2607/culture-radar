@@ -86,6 +86,9 @@ export interface CultureTrend {
   status: 'active' | 'archived' | 'flagged'
   brandBrief: ActionBrief | null  // Action-specific analysis
   countryRelevance: ActionCountry[]  // Empty array = global (shown everywhere)
+  feedbackUseful: number
+  feedbackGeneric: number
+  thumbnailMeta: { authorName?: string; authorUrl?: string; title?: string; source?: string } | null
 }
 
 export type PredictionType = 'emerging' | 'lifecycle' | 'seasonal'

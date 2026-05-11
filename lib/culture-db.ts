@@ -87,6 +87,9 @@ interface TrendRowDB {
   status: string
   brand_brief: ActionBrief | null
   country_relevance: string[] | null
+  feedback_useful: number | null
+  feedback_generic: number | null
+  thumbnail_meta: { authorName?: string; authorUrl?: string; title?: string; source?: string } | null
 }
 
 interface ExistingTrendForUpsert {
@@ -454,7 +457,8 @@ export async function listTrends(args: ListTrendsArgs): Promise<TrendRowDB[]> {
             category, content_type, hashtags, example_urls, thumbnail_url,
             popularity_score, freshness_score, validation_score, reasoning,
             source_ids, source_names, daily_rank, weekly_rank, rank_date,
-            rank_week, estimated_views, status, brand_brief, country_relevance
+            rank_week, estimated_views, status, brand_brief, country_relevance,
+            feedback_useful, feedback_generic, thumbnail_meta
        FROM culture_trends
       WHERE ${conditions.join(' AND ')}
       ORDER BY ${orderBy}
@@ -519,5 +523,8 @@ export function rowToTrend(row: TrendRowDB): CultureTrend {
     status: row.status as CultureTrend['status'],
     brandBrief: row.brand_brief ?? null,
     countryRelevance: (row.country_relevance ?? []) as CultureTrend['countryRelevance'],
+    feedbackUseful: row.feedback_useful ?? 0,
+    feedbackGeneric: row.feedback_generic ?? 0,
+    thumbnailMeta: row.thumbnail_meta ?? null,
   }
 }

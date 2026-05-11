@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { apiFetch } from '@/lib/api-client'
 import type { CultureSource, CultureTrend } from '@/types/culture'
+import { styleFor, LIFECYCLE_VISUAL } from './category-style'
 
 type View = 'daily' | 'weekly' | 'all' | 'emerging'
 
@@ -838,94 +839,173 @@ function StatCard({
   )
 }
 
-const LIFECYCLE_LABELS: Record<string, { label: string; color: string; bg: string }> = {
-  emerging:   { label: 'Emerging',   color: '#065f46', bg: '#d1fae5' },
-  growing:    { label: 'Growing',    color: '#1e40af', bg: '#dbeafe' },
-  peak:       { label: 'Peak',       color: '#92400e', bg: '#fef3c7' },
-  saturating: { label: 'Saturating', color: '#6b7280', bg: '#f3f4f6' },
-}
-
 function TrendRow({ trend, view }: { trend: CultureTrend; view: View }) {
   const rank =
     view === 'daily' ? trend.dailyRank : view === 'weekly' ? trend.weeklyRank : null
   const isManual = trend.sourceNames.includes('Spotted in the Wild')
   const brief = trend.brandBrief
+  const cat = styleFor(trend.category)
+  const lc = brief?.lifecycleStage ? LIFECYCLE_VISUAL[brief.lifecycleStage] : null
+
+  const [feedbackState, setFeedbackState] = useState<'idle' | 'useful' | 'generic' | 'archived'>('idle')
+
+  const sendFeedback = async (action: 'useful' | 'generic' | 'archive') => {
+    setFeedbackState(action === 'archive' ? 'archived' : action)
+    try {
+      await apiFetch('/api/culture/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trendId: trend.id, action }),
+      })
+    } catch {
+      /* fire and forget */
+    }
+  }
+
+  if (feedbackState === 'archived') {
+    return (
+      <div className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 flex items-center justify-between">
+        <p className="text-xs text-gray-500">
+          <span className="line-through">{trend.name}</span> · archived
+        </p>
+        <button
+          onClick={() => setFeedbackState('idle')}
+          className="text-xs text-gray-400 underline"
+        >
+          undo
+        </button>
+      </div>
+    )
+  }
 
   return (
-    <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-      {/* Main row */}
-      <div className="px-5 py-4 flex gap-4 items-start">
-        {rank !== null && (
-          <div
-            className="flex-shrink-0 w-9 h-9 rounded-full flex items-center justify-center text-white font-bold"
-            style={{ backgroundColor: 'var(--action-red)', fontFamily: 'var(--font-display)' }}
-          >
-            {rank}
-          </div>
-        )}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h3
-              className="text-base font-semibold text-gray-900"
-              style={{ fontFamily: 'var(--font-display)' }}
-            >
-              {trend.name}
-            </h3>
-            <CategoryPill category={trend.category} />
-            {isManual && (
-              <span
-                className="text-xs font-medium px-2 py-0.5 rounded-full"
-                style={{ backgroundColor: '#fef9c3', color: '#854d0e' }}
-              >
-                spotted
-              </span>
-            )}
-            {trend.validationScore >= 2 && (
-              <span
-                className="text-xs font-medium px-2 py-0.5 rounded-full"
-                style={{ backgroundColor: '#ecfdf5', color: '#047857' }}
-              >
-                {trend.validationScore} sources
-              </span>
-            )}
-            {brief?.lifecycleStage && (() => {
-              const lc = LIFECYCLE_LABELS[brief.lifecycleStage]
-              return lc ? (
-                <span
-                  className="text-xs font-medium px-2 py-0.5 rounded-full"
-                  style={{ backgroundColor: lc.bg, color: lc.color }}
-                >
-                  {lc.label}
-                </span>
-              ) : null
-            })()}
-            <ScoreBadge label="pop" value={trend.popularityScore} />
-            <ScoreBadge label="fresh" value={trend.freshnessScore} />
-            {brief?.urgency != null && (
-              <ScoreBadge label="urgency" value={brief.urgency} />
-            )}
-          </div>
-          <p className="text-sm text-gray-700 mt-1">{trend.description}</p>
-          {trend.hashtags.length > 0 && (
-            <p className="text-xs text-gray-500 mt-1.5">{trend.hashtags.slice(0, 8).join(' ')}</p>
+    <div
+      className="bg-white rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow border"
+      style={{ borderColor: '#e5e7eb', borderLeftWidth: 5, borderLeftColor: cat.accent }}
+    >
+      {/* Main card: thumbnail / icon on left, content on right */}
+      <div className="flex gap-4">
+        {/* Visual block — thumbnail OR category emoji */}
+        <div
+          className="flex-shrink-0 relative flex items-center justify-center"
+          style={{
+            width: 140,
+            minHeight: 140,
+            backgroundColor: cat.bg,
+            backgroundImage: trend.thumbnailUrl
+              ? `url(${trend.thumbnailUrl})`
+              : undefined,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+          }}
+        >
+          {!trend.thumbnailUrl && (
+            <span className="text-5xl select-none">{cat.emoji}</span>
           )}
-          <div className="space-y-1 mt-1">
-            {trend.sourceNames.length > 0 && (
-              <p className="text-xs text-gray-400">
-                {trend.sourceNames.join(', ')}
-                {trend.estimatedViews ? ` · ${trend.estimatedViews}` : ''}
-              </p>
-            )}
-            {trend.exampleUrls.length > 0 && (
-              <div className="flex flex-wrap gap-1">
-                {sortExampleUrls(trend.exampleUrls)
-                  .slice(0, 5)
-                  .map((url, i) => (
-                    <ExampleLink key={`${url}-${i}`} url={url} />
-                  ))}
+          {rank !== null && (
+            <div
+              className="absolute top-2 left-2 w-7 h-7 rounded-full flex items-center justify-center text-white font-bold text-sm shadow-md"
+              style={{ backgroundColor: 'var(--action-red)', fontFamily: 'var(--font-display)' }}
+            >
+              {rank}
+            </div>
+          )}
+          {trend.thumbnailMeta?.authorName && (
+            <div
+              className="absolute bottom-1 left-1 right-1 text-[10px] text-white font-medium truncate px-1 py-0.5 rounded"
+              style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
+            >
+              {trend.thumbnailMeta.authorName}
+            </div>
+          )}
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 min-w-0 px-4 py-3">
+          {/* Header row: title + lifecycle */}
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h3
+                className="text-base font-bold text-gray-900 leading-tight"
+                style={{ fontFamily: 'var(--font-display)' }}
+              >
+                {trend.name}
+              </h3>
+              <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                <span
+                  className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded"
+                  style={{ backgroundColor: cat.bg, color: cat.fg, border: `1px solid ${cat.border}` }}
+                >
+                  {cat.emoji} {trend.category}
+                </span>
+                {isManual && (
+                  <span
+                    className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded"
+                    style={{ backgroundColor: '#fef9c3', color: '#854d0e' }}
+                  >
+                    spotted
+                  </span>
+                )}
+                {(trend.countryRelevance ?? []).slice(0, 4).map((c) => (
+                  <span
+                    key={c}
+                    className="text-[10px] px-1 py-0.5 rounded font-medium"
+                    style={{ backgroundColor: '#f3f4f6', color: '#4a4f5c' }}
+                  >
+                    {c}
+                  </span>
+                ))}
+              </div>
+            </div>
+            {/* Lifecycle progress bar */}
+            {lc && (
+              <div className="flex-shrink-0 w-24">
+                <p className="text-[9px] font-bold uppercase tracking-wider mb-0.5 text-right" style={{ color: lc.color }}>
+                  {lc.label}
+                </p>
+                <div className="h-1.5 w-full rounded-full" style={{ backgroundColor: '#f3f4f6' }}>
+                  <div
+                    className="h-full rounded-full transition-all"
+                    style={{ width: `${lc.progress}%`, backgroundColor: lc.color }}
+                  />
+                </div>
+                {brief?.urgency != null && (
+                  <p className="text-[9px] mt-0.5 text-right text-gray-500">
+                    urgency {brief.urgency}/10
+                  </p>
+                )}
               </div>
             )}
           </div>
+
+          {/* Description */}
+          <p className="text-sm text-gray-700 mt-2 leading-snug">{trend.description}</p>
+
+          {/* Hashtags */}
+          {trend.hashtags.length > 0 && (
+            <p className="text-xs text-gray-500 mt-1.5">
+              {trend.hashtags.slice(0, 6).join(' ')}
+            </p>
+          )}
+
+          {/* Source + estimated views */}
+          {(trend.sourceNames.length > 0 || trend.estimatedViews) && (
+            <p className="text-[11px] text-gray-400 mt-1.5">
+              {trend.sourceNames.slice(0, 2).join(', ')}
+              {trend.estimatedViews ? ` · ${trend.estimatedViews}` : ''}
+            </p>
+          )}
+
+          {/* URL chips */}
+          {trend.exampleUrls.length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-2">
+              {sortExampleUrls(trend.exampleUrls)
+                .slice(0, 5)
+                .map((url, i) => (
+                  <ExampleLink key={`${url}-${i}`} url={url} />
+                ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -1006,7 +1086,68 @@ function TrendRow({ trend, view }: { trend: CultureTrend; view: View }) {
           </div>
         </div>
       )}
+
+      {/* Feedback bar */}
+      <div
+        className="border-t flex items-center justify-between px-4 py-2"
+        style={{ borderColor: '#f0f0f0', backgroundColor: '#fcfcfd' }}
+      >
+        <div className="flex items-center gap-1 text-[11px] text-gray-400">
+          {trend.feedbackUseful > 0 && (
+            <span className="text-emerald-700">👍 {trend.feedbackUseful}</span>
+          )}
+          {trend.feedbackGeneric > 0 && (
+            <span className="text-amber-700 ml-2">👎 {trend.feedbackGeneric}</span>
+          )}
+        </div>
+        <div className="flex items-center gap-1">
+          <FeedbackButton
+            label="👍 Useful"
+            active={feedbackState === 'useful'}
+            color="#047857"
+            onClick={() => sendFeedback('useful')}
+          />
+          <FeedbackButton
+            label="👎 Too generic"
+            active={feedbackState === 'generic'}
+            color="#92400e"
+            onClick={() => sendFeedback('generic')}
+          />
+          <FeedbackButton
+            label="🚫 Archive"
+            active={false}
+            color="#b91c1c"
+            onClick={() => sendFeedback('archive')}
+          />
+        </div>
+      </div>
     </div>
+  )
+}
+
+function FeedbackButton({
+  label,
+  active,
+  color,
+  onClick,
+}: {
+  label: string
+  active: boolean
+  color: string
+  onClick: () => void
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="text-[11px] px-2 py-1 rounded-md transition-all hover:bg-gray-100"
+      style={{
+        color: active ? color : '#6b7280',
+        fontWeight: active ? 600 : 400,
+        backgroundColor: active ? '#f9fafb' : 'transparent',
+      }}
+    >
+      {label}
+    </button>
   )
 }
 
