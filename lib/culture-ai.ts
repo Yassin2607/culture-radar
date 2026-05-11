@@ -295,21 +295,26 @@ function looksLikeMatureConcept(name: string, description: string): boolean {
 }
 
 const HOLIDAY_KEYWORDS = [
-  // Mother / Father (multi-lang)
-  "mother's day", 'mothers day', 'moederdag', 'fête des mères', 'festa della mamma',
-  'día de la madre', 'dia da mãe', 'muttertag', 'anyák napja', 'dzień matki',
-  "father's day", 'fathers day', 'vaderdag', 'fête des pères', 'vatertag',
-  'día del padre', 'dia do pai',
+  // Mother / Father (multi-lang) — both spaced AND hashtag-style
+  "mother's day", 'mothers day', 'mothersday', 'happymothersday',
+  'moederdag', 'fête des mères', 'fetedesmeres', 'festa della mamma',
+  'festadellamamma', 'día de la madre', 'dia de la madre', 'diadelamadre',
+  'dia de las madres', 'diadelasmadres', 'dia da mãe', 'diadamae',
+  'muttertag', 'anyák napja', 'anyaknapja', 'dzień matki', 'dzienmatki',
+  '10demayo', '10 de mayo', 'feliz dia das mães', '#mamá', '#madre', '#mother',
+  "father's day", 'fathers day', 'fathersday',
+  'vaderdag', 'fête des pères', 'fetedesperes', 'vatertag',
+  'día del padre', 'diadelpadre', 'dia do pai', 'diadopai',
   // Religious / calendar
-  "valentine's day", 'valentijnsdag', 'valentijn',
-  'easter sunday', 'pasen', 'pâques', 'ostern',
-  'carnival', 'carnaval', 'mardi gras',
-  "king's day", 'koningsdag',
+  "valentine's day", 'valentijnsdag', 'valentijn', 'valentinesday',
+  'easter sunday', 'pasen', 'pâques', 'ostern', 'easter2026',
+  'carnival', 'carnaval', 'mardi gras', 'mardigras',
+  "king's day", 'koningsdag', 'kingsday',
   'halloween',
   'sinterklaas',
-  'christmas eve', 'christmas day', "new year's eve",
+  'christmas eve', 'christmas day', "new year's eve", 'newyearseve',
   // Public events / awards
-  'met gala', 'cannes film festival',
+  'met gala', 'metgala', 'cannes film festival', 'cannesfilmfestival',
   'eurovision',
   'oscars', 'grammys',
 ]
