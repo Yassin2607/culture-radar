@@ -123,6 +123,18 @@ export default function MomentsRadarPage() {
         }
       }
 
+      // Enrich top moments with related topics
+      setRefreshStage('Fetching related topics…')
+      try {
+        await apiFetch('/api/moments/enrich-topics', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ limit: 10 }),
+        })
+      } catch {
+        /* best-effort */
+      }
+
       setRefreshResult({ momentsUpserted, briefed: totalBriefed })
       await loadMoments()
     } catch (e) {
@@ -543,6 +555,39 @@ function MomentRow({ moment, filterCountry }: { moment: CultureMoment; filterCou
           })()}
         </div>
       </div>
+
+      {/* Related topics */}
+      {moment.relatedTopics && moment.relatedTopics.length > 0 && (
+        <div
+          className="border-t px-5 py-2.5"
+          style={{ backgroundColor: '#ffffff', borderColor: '#f0f0f0' }}
+        >
+          <p
+            className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1.5"
+            style={{ fontFamily: 'var(--font-display)' }}
+          >
+            Related topics
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {moment.relatedTopics.slice(0, 12).map((t, i) => (
+              <span
+                key={`${t.topic}-${i}`}
+                className="text-[11px] px-2 py-0.5 rounded-full inline-flex items-center gap-1"
+                style={{
+                  backgroundColor: t.source === 'google_trends' ? '#fef3c7' : '#f3f4f6',
+                  color: t.source === 'google_trends' ? '#92400e' : '#374151',
+                  border: '1px solid',
+                  borderColor: t.source === 'google_trends' ? '#fde68a' : '#e5e7eb',
+                }}
+                title={t.context || t.topic}
+              >
+                {t.source === 'google_trends' && <span>📈</span>}
+                {t.topic}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Action brief */}
       {brief && (

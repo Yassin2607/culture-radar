@@ -12,6 +12,7 @@ import type {
   CountryDate,
   CultureMoment,
   MomentCategory,
+  MomentRelatedTopic,
   MomentTier,
 } from '@/types/culture'
 
@@ -37,6 +38,7 @@ interface MomentRowDB {
   source_names: string[] | null
   reasoning: string | null
   status: string
+  related_topics: MomentRelatedTopic[] | null
 }
 
 export interface ListMomentsArgs {
@@ -90,7 +92,8 @@ export async function listMoments(args: ListMomentsArgs = {}): Promise<MomentRow
             cultural_relevance, category, scope, country_dates,
             next_occurrence::TEXT AS next_occurrence,
             recurring, typical_duration_days, hashtags, example_urls,
-            thumbnail_url, brand_brief, source_names, reasoning, status
+            thumbnail_url, brand_brief, source_names, reasoning, status,
+            related_topics
        FROM culture_moments
        ${where}
        ORDER BY next_occurrence ASC NULLS LAST, cultural_relevance DESC
@@ -123,6 +126,7 @@ export function rowToMoment(row: MomentRowDB): CultureMoment {
     sourceNames: row.source_names ?? [],
     reasoning: row.reasoning,
     status: row.status as CultureMoment['status'],
+    relatedTopics: row.related_topics ?? null,
   }
 }
 

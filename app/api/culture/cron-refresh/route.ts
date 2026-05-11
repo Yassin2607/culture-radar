@@ -21,6 +21,7 @@ import { POST as fetchHandler } from '@/app/api/culture/fetch/route'
 import { POST as backfillBriefsHandler } from '@/app/api/culture/backfill-briefs/route'
 import { POST as momentsFetchHandler } from '@/app/api/moments/fetch/route'
 import { POST as momentsBriefsHandler } from '@/app/api/moments/backfill-briefs/route'
+import { POST as momentsEnrichHandler } from '@/app/api/moments/enrich-topics/route'
 import { sql } from '@/lib/culture-db'
 
 // Cron jobs are long-running. Max out within Hobby plan budget.
@@ -89,6 +90,18 @@ export async function GET(req: NextRequest) {
         const briefRes = await momentsBriefsHandler(briefReq)
         const briefData = (await briefRes.json()) as { briefed?: number }
         momentsBriefsBriefed = briefData.briefed ?? 0
+      } catch {
+        /* best-effort */
+      }
+
+      // Enrich top upcoming moments with related topics (best-effort)
+      try {
+        const enrichReq = new NextRequest(new URL('http://internal/api/moments/enrich-topics'), {
+          method: 'POST',
+          headers: { authorization: expectedBearer, 'content-type': 'application/json' },
+          body: JSON.stringify({ limit: 8 }),
+        })
+        await momentsEnrichHandler(enrichReq)
       } catch {
         /* best-effort */
       }

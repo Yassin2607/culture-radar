@@ -138,6 +138,14 @@ export interface CountryDate {
   localName?: string    // "Moederdag", "Fête des Mères"
 }
 
+export interface MomentRelatedTopic {
+  topic: string
+  context: string
+  source: 'perplexity' | 'google_trends'
+  countries?: string[]
+  url?: string
+}
+
 export interface CultureMoment {
   id: string
   createdAt: string
@@ -160,6 +168,7 @@ export interface CultureMoment {
   sourceNames: string[]
   reasoning: string | null
   status: 'upcoming' | 'happening' | 'archived'
+  relatedTopics: MomentRelatedTopic[] | null
 }
 
 // ── Moderation ────────────────────────────────────────────────────────────
