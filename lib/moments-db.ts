@@ -81,9 +81,14 @@ export async function listMoments(args: ListMomentsArgs = {}): Promise<MomentRow
   params.push(limit)
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+  // Cast next_occurrence to TEXT to avoid the Postgres DATE → JS Date
+  // round-trip that shifts the day by ±1 depending on the server's local
+  // TZ (CET/CEST is UTC+1/+2, so a DATE '2026-05-14' came back as
+  // '2026-05-13T22:00:00Z' and the UI rendered it one day early).
   const rows = (await sql().query(
     `SELECT id, created_at, updated_at, name, slug, description, tier,
-            cultural_relevance, category, scope, country_dates, next_occurrence,
+            cultural_relevance, category, scope, country_dates,
+            next_occurrence::TEXT AS next_occurrence,
             recurring, typical_duration_days, hashtags, example_urls,
             thumbnail_url, brand_brief, source_names, reasoning, status
        FROM culture_moments

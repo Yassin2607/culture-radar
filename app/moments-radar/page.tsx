@@ -471,30 +471,45 @@ function MomentRow({ moment, filterCountry }: { moment: CultureMoment; filterCou
           <p className="text-sm text-gray-700 mt-1">{moment.description}</p>
 
           {/* Countries */}
-          {moment.countryDates.length > 0 && (
-            <div className="flex flex-wrap gap-1 mt-2">
-              {moment.countryDates.map((cd) => {
-                const country = COUNTRIES.find((c) => c.code === cd.country)
-                if (!country) return null
-                const isHighlighted = filterCountry === cd.country
-                return (
-                  <span
-                    key={cd.country}
-                    className="text-[10px] px-1.5 py-0.5 rounded font-medium"
-                    style={{
-                      backgroundColor: isHighlighted ? '#fef2f2' : '#f3f4f6',
-                      color: isHighlighted ? 'var(--action-red)' : '#4a4f5c',
-                      border: isHighlighted ? '1px solid #fecaca' : '1px solid transparent',
-                    }}
-                    title={`${country.name}: ${cd.localName ?? moment.name} · ${cd.date}`}
-                  >
-                    {country.flag} {cd.country}{' '}
-                    <span className="text-gray-400">{cd.date.slice(5)}</span>
-                  </span>
-                )
-              })}
-            </div>
-          )}
+          {moment.countryDates.length > 0 && (() => {
+            const today = new Date().toISOString().slice(0, 10)
+            return (
+              <div className="flex flex-wrap gap-1 mt-2">
+                {moment.countryDates.map((cd) => {
+                  const country = COUNTRIES.find((c) => c.code === cd.country)
+                  if (!country) return null
+                  const isHighlighted = filterCountry === cd.country
+                  const isPast = cd.date < today
+                  return (
+                    <span
+                      key={cd.country}
+                      className="text-[10px] px-1.5 py-0.5 rounded font-medium"
+                      style={{
+                        backgroundColor: isPast
+                          ? '#f9fafb'
+                          : isHighlighted
+                            ? '#fef2f2'
+                            : '#f3f4f6',
+                        color: isPast
+                          ? '#9ca3af'
+                          : isHighlighted
+                            ? 'var(--action-red)'
+                            : '#4a4f5c',
+                        border: isHighlighted ? '1px solid #fecaca' : '1px solid transparent',
+                        textDecoration: isPast ? 'line-through' : 'none',
+                      }}
+                      title={`${country.name}: ${cd.localName ?? moment.name} · ${cd.date}${isPast ? ' (passed)' : ''}`}
+                    >
+                      {country.flag} {cd.country}{' '}
+                      <span className={isPast ? 'text-gray-300' : 'text-gray-400'}>
+                        {cd.date.slice(5)}
+                      </span>
+                    </span>
+                  )
+                })}
+              </div>
+            )
+          })()}
         </div>
       </div>
 
