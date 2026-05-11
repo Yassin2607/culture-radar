@@ -158,8 +158,15 @@ export async function POST(req: NextRequest) {
       push(
         'info',
         'fully_past',
-        `All ${cds.length} country dates are in the past; consider archiving or rolling to next year.`,
+        `All ${cds.length} country dates are in the past; archiving.`,
       )
+      if (body.fix) {
+        await sql().query(
+          `UPDATE culture_moments SET status = 'archived', updated_at = NOW() WHERE id = $1`,
+          [r.id],
+        )
+        fixed++
+      }
     }
 
     // Global moments should have all 14 countries
