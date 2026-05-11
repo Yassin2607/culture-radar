@@ -13,7 +13,22 @@
 
 import { sql } from '@/lib/culture-db'
 import { isoWeek } from '@/lib/culture-radar'
+import { getTodaysCohort } from '@/lib/creator-radar'
 import type { ActionBrief, CultureTrend, CultureMoment } from '@/types/culture'
+
+interface CreatorForReport {
+  handle: string
+  platform: string
+  profile_url: string | null
+  name: string | null
+  niche: string | null
+  why_relevant: string | null
+  follower_count: number | null
+  country_relevance: string[] | null
+  example_video_urls: string[] | null
+  tags: string[] | null
+  cohort_date: string
+}
 
 interface TrendForReport {
   id: string
@@ -57,6 +72,7 @@ export interface ReportData {
   inspiration: TrendForReport[]
   emerging: TrendForReport[]
   upcomingMoments: MomentForReport[]
+  creators: CreatorForReport[]
 }
 
 export async function fetchReportData(): Promise<ReportData> {
@@ -121,6 +137,8 @@ export async function fetchReportData(): Promise<ReportData> {
       LIMIT 8`,
   )) as MomentForReport[]
 
+  const creators = (await getTodaysCohort()) as CreatorForReport[]
+
   return {
     generatedAt: new Date().toISOString(),
     week,
@@ -129,6 +147,7 @@ export async function fetchReportData(): Promise<ReportData> {
     inspiration,
     emerging,
     upcomingMoments,
+    creators,
   }
 }
 
@@ -236,6 +255,52 @@ function renderTrendCard(t: TrendForReport, opts: { showRank?: boolean } = {}): 
 </td></tr>`
 }
 
+function renderCreatorCard(c: CreatorForReport): string {
+  const platformBg = c.platform === 'tiktok' ? '#000' : c.platform === 'instagram' ? '#E1306C' : '#FF0000'
+  const platformLabel = c.platform === 'tiktok' ? 'TT' : c.platform === 'instagram' ? 'IG' : 'YT'
+  const followerStr = c.follower_count
+    ? c.follower_count >= 1_000_000
+      ? `${(c.follower_count / 1_000_000).toFixed(1)}M`
+      : c.follower_count >= 1_000
+        ? `${Math.round(c.follower_count / 1_000)}K`
+        : String(c.follower_count)
+    : ''
+  const videos = (c.example_video_urls ?? []).slice(0, 2)
+
+  return `
+<td valign="top" style="padding:0 6px 12px 0;width:50%;">
+  <table cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#FFFDF3;border:1px solid #000;border-left:4px solid #FF1300;">
+    <tr>
+      <td style="padding:12px 14px;">
+        <table cellpadding="0" cellspacing="0" border="0" width="100%">
+          <tr>
+            <td valign="middle">
+              <p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:14px;color:#000;letter-spacing:-0.01em;">${c.profile_url ? `<a href="${escapeHtml(c.profile_url)}" style="color:#000;text-decoration:none;">@${escapeHtml(c.handle)}</a>` : `@${escapeHtml(c.handle)}`}</p>
+              ${c.name && c.name.replace(/^@/, '') !== c.handle ? `<p style="margin:1px 0 0 0;font-family:'Inter',sans-serif;font-size:11px;color:#000;opacity:0.6;">${escapeHtml(c.name)}</p>` : ''}
+            </td>
+            <td valign="middle" align="right" width="80">
+              <span style="display:inline-block;background:${platformBg};color:#FFFDF3;font-family:'Archivo Black',sans-serif;font-size:9px;letter-spacing:0.1em;padding:2px 6px;">${platformLabel}</span>
+              ${followerStr ? `<span style="display:inline-block;font-family:'Archivo Black',sans-serif;font-size:11px;color:#FF1300;margin-left:4px;">${followerStr}</span>` : ''}
+            </td>
+          </tr>
+        </table>
+        ${c.niche ? `<p style="margin:6px 0 0 0;font-family:'Inter',sans-serif;font-size:12px;color:#000;line-height:1.4;">${escapeHtml(c.niche)}</p>` : ''}
+        ${c.why_relevant ? `<p style="margin:6px 0 0 0;font-family:'Inter',sans-serif;font-size:11px;color:#000;line-height:1.4;background:#FFFDF3;border-left:2px solid #FF1300;padding:4px 8px;"><strong style="color:#FF1300;">WHY:</strong> ${escapeHtml(c.why_relevant)}</p>` : ''}
+        ${(c.country_relevance && c.country_relevance.length > 0) || (c.tags && c.tags.length > 0) ? `
+          <p style="margin:6px 0 0 0;font-family:'Inter',sans-serif;font-size:10px;color:#000;">
+            ${(c.country_relevance ?? []).slice(0, 3).map((cc) => `<span style="display:inline-block;background:#000;color:#FFFDF3;padding:1px 6px;margin-right:3px;font-family:'Archivo Black',sans-serif;font-size:9px;">${escapeHtml(cc)}</span>`).join('')}
+            ${(c.tags ?? []).slice(0, 3).map((t) => `<span style="display:inline-block;background:#FFFDF3;color:#000;border:1px solid #000;padding:1px 6px;margin-right:3px;font-size:9px;">${escapeHtml(t)}</span>`).join('')}
+          </p>` : ''}
+        ${videos.length > 0 ? `
+          <p style="margin:8px 0 0 0;">
+            ${videos.map((u) => `<a href="${escapeHtml(u)}" style="display:inline-block;background:#000;color:#FFFDF3;font-family:'Archivo Black',sans-serif;font-size:9px;letter-spacing:0.08em;padding:3px 7px;text-decoration:none;margin-right:3px;">▶ VIDEO</a>`).join('')}
+          </p>` : ''}
+      </td>
+    </tr>
+  </table>
+</td>`
+}
+
 function renderMomentRow(m: MomentForReport): string {
   const date = m.next_occurrence ? new Date(m.next_occurrence) : null
   const daysUntil = date ? Math.ceil((date.getTime() - Date.now()) / 86_400_000) : 0
@@ -263,50 +328,77 @@ export function renderReportHtml(data: ReportData): string {
   const dateLabel = formatDate(data.generatedAt)
   const totalTrends = data.dailyTop10.length + data.weeklyTop20.length + data.inspiration.length + data.emerging.length
 
+  // JackandAI brand palette
+  // - Primary red: #FF1300
+  // - Black: #000000
+  // - Cream: #FFFDF3
+  // Fonts: Benzin-style display (Archivo Black as approximation) + clean sans (Inter)
+
   return `<!DOCTYPE html>
 <html lang="nl">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Culture Radar Daily — ${dateLabel}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Archivo:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 <style>
-  body { margin: 0; padding: 0; background: #f5f5f0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; color: #1f2937; }
+  body { margin: 0; padding: 0; background: #FFFDF3; font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; color: #000000; }
+  h1, h2, h3 { font-family: 'Archivo Black', 'Archivo', sans-serif; letter-spacing: -0.01em; }
   a { color: inherit; }
+  .display { font-family: 'Archivo Black', sans-serif; }
   @media print {
-    body { background: #fff; }
+    body { background: #FFFDF3; }
     .no-print { display: none !important; }
   }
 </style>
 </head>
-<body style="margin:0;padding:0;background:#f5f5f0;">
-<table cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#f5f5f0;">
+<body style="margin:0;padding:0;background:#FFFDF3;font-family:'Inter',sans-serif;">
+<table cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#FFFDF3;">
   <tr>
     <td align="center" style="padding:24px 16px;">
-      <table cellpadding="0" cellspacing="0" border="0" width="720" style="max-width:720px;background:#ffffff;">
-        <!-- Hero header -->
+      <table cellpadding="0" cellspacing="0" border="0" width="760" style="max-width:760px;background:#FFFDF3;">
+        <!-- Hero header — JackandAI: black slab with massive red headline -->
         <tr>
-          <td style="padding:32px 40px 24px;background:linear-gradient(135deg,#E3000F 0%,#7c1010 100%);color:#ffffff;">
-            <p style="margin:0;font-size:11px;letter-spacing:0.15em;text-transform:uppercase;opacity:0.85;">CULTURE RADAR DAILY</p>
-            <h1 style="margin:8px 0 4px 0;font-family:Georgia,serif;font-size:32px;line-height:1.1;font-weight:700;">${dateLabel}</h1>
-            <p style="margin:0;font-size:13px;opacity:0.85;">${totalTrends} trends · ${data.upcomingMoments.length} upcoming moments · week ${data.week}</p>
+          <td style="padding:48px 40px 40px;background:#000000;color:#FFFDF3;">
+            <table cellpadding="0" cellspacing="0" border="0" width="100%">
+              <tr>
+                <td>
+                  <p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#FF1300;">JACK&amp;A!  ×  ACTION</p>
+                  <h1 style="margin:12px 0 6px 0;font-family:'Archivo Black',sans-serif;font-size:46px;line-height:0.95;font-weight:900;text-transform:uppercase;letter-spacing:-0.02em;color:#FFFDF3;">Culture<br/>Radar<span style="color:#FF1300;">.</span></h1>
+                  <p style="margin:12px 0 0 0;font-family:'Inter',sans-serif;font-size:14px;color:#FFFDF3;opacity:0.7;">${dateLabel}</p>
+                  <p style="margin:4px 0 0 0;font-family:'Inter',sans-serif;font-size:12px;color:#FF1300;font-weight:600;">${totalTrends} trends · ${data.upcomingMoments.length} upcoming moments · week ${data.week}</p>
+                </td>
+              </tr>
+            </table>
           </td>
         </tr>
+        <!-- Red accent strip -->
+        <tr><td style="background:#FF1300;height:6px;line-height:0;font-size:0;">&nbsp;</td></tr>
 
         <!-- TLDR -->
         <tr>
-          <td style="padding:24px 40px 8px;border-bottom:1px solid #e5e7eb;">
-            <p style="margin:0;font-size:13px;color:#6b7280;line-height:1.6;font-style:italic;">
-              Goedemorgen team. Hieronder de top trends die NU spelen op TikTok, Reels en het bredere internet, plus de moments die we de komende weken kunnen oppakken. Klik op een trend om naar de video te gaan. Sounds met een ✓ zijn safe voor Action's business account.
+          <td style="padding:28px 40px 8px;background:#FFFDF3;">
+            <p style="margin:0;font-family:'Inter',sans-serif;font-size:14px;color:#000000;line-height:1.55;">
+              <strong style="font-family:'Archivo Black',sans-serif;color:#FF1300;text-transform:uppercase;letter-spacing:0.05em;font-size:11px;">TLDR &nbsp;→</strong>&nbsp;
+              Hieronder de top trends die NU spelen op TikTok, Reels en het bredere internet, plus de moments die we de komende weken kunnen oppakken. Klik op een trend om naar de video te gaan. Sounds met een <strong style="color:#FF1300;">✓</strong> zijn safe voor Action's business account.
             </p>
           </td>
         </tr>
 
         <!-- DAILY TOP 10 -->
         <tr>
-          <td style="padding:32px 40px 8px;">
-            <p style="margin:0;font-size:10px;letter-spacing:0.15em;text-transform:uppercase;color:#E3000F;font-weight:700;">SECTION 01</p>
-            <h2 style="margin:4px 0 4px 0;font-family:Georgia,serif;font-size:24px;color:#111827;">🔥 Today's Top ${data.dailyTop10.length}</h2>
-            <p style="margin:0 0 16px 0;font-size:12px;color:#6b7280;">The trends Action's team needs to know about right now.</p>
+          <td style="padding:40px 40px 8px;background:#FFFDF3;">
+            <table cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td style="background:#FF1300;color:#FFFDF3;padding:4px 10px;font-family:'Archivo Black',sans-serif;font-size:10px;letter-spacing:0.15em;text-transform:uppercase;font-weight:900;">01</td>
+                <td width="12">&nbsp;</td>
+                <td><p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#000;">Today's Top ${data.dailyTop10.length}</p></td>
+              </tr>
+            </table>
+            <h2 style="margin:14px 0 4px 0;font-family:'Archivo Black',sans-serif;font-size:32px;line-height:1.05;color:#000;text-transform:uppercase;letter-spacing:-0.02em;">🔥 What's hot<br/><span style="color:#FF1300;">right now.</span></h2>
+            <p style="margin:8px 0 18px 0;font-family:'Inter',sans-serif;font-size:13px;color:#000;opacity:0.7;">The trends Action's team needs to know about today.</p>
           </td>
         </tr>
         <tr><td style="padding:0 40px;">
@@ -317,14 +409,21 @@ export function renderReportHtml(data: ReportData): string {
 
         ${data.inspiration.length > 0 ? `
         <!-- INSPIRATION -->
+        <tr><td style="background:#FFFDF3;height:32px;"></td></tr>
         <tr>
-          <td style="padding:32px 40px 8px;border-top:8px solid #f5f5f0;">
-            <p style="margin:0;font-size:10px;letter-spacing:0.15em;text-transform:uppercase;color:#0891b2;font-weight:700;">SECTION 02</p>
-            <h2 style="margin:4px 0 4px 0;font-family:Georgia,serif;font-size:24px;color:#111827;">💡 Inspiration formats</h2>
-            <p style="margin:0 0 16px 0;font-size:12px;color:#6b7280;">Ways to MAKE content — editing tricks, visual signatures, format templates the team can copy.</p>
+          <td style="padding:24px 40px 8px;background:#FFFDF3;border-top:2px solid #000;">
+            <table cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td style="background:#000;color:#FFFDF3;padding:4px 10px;font-family:'Archivo Black',sans-serif;font-size:10px;letter-spacing:0.15em;text-transform:uppercase;font-weight:900;">02</td>
+                <td width="12">&nbsp;</td>
+                <td><p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#000;">Inspiration formats</p></td>
+              </tr>
+            </table>
+            <h2 style="margin:14px 0 4px 0;font-family:'Archivo Black',sans-serif;font-size:32px;line-height:1.05;color:#000;text-transform:uppercase;letter-spacing:-0.02em;">💡 Steal these<br/><span style="color:#FF1300;">formats.</span></h2>
+            <p style="margin:8px 0 18px 0;font-family:'Inter',sans-serif;font-size:13px;color:#000;opacity:0.7;">Ways to MAKE content — editing tricks, visual signatures, format templates.</p>
           </td>
         </tr>
-        <tr><td style="padding:0 40px;">
+        <tr><td style="padding:0 40px;background:#FFFDF3;">
           <table cellpadding="0" cellspacing="0" border="0" width="100%">
             ${data.inspiration.map((t) => renderTrendCard(t)).join('')}
           </table>
@@ -332,44 +431,91 @@ export function renderReportHtml(data: ReportData): string {
 
         ${data.emerging.length > 0 ? `
         <!-- EMERGING -->
+        <tr><td style="background:#FFFDF3;height:32px;"></td></tr>
         <tr>
-          <td style="padding:32px 40px 8px;border-top:8px solid #f5f5f0;">
-            <p style="margin:0;font-size:10px;letter-spacing:0.15em;text-transform:uppercase;color:#7c3aed;font-weight:700;">SECTION 03</p>
-            <h2 style="margin:4px 0 4px 0;font-family:Georgia,serif;font-size:24px;color:#111827;">✨ Emerging signals</h2>
-            <p style="margin:0 0 16px 0;font-size:12px;color:#6b7280;">Small but rising — get in early.</p>
+          <td style="padding:24px 40px 8px;background:#FFFDF3;border-top:2px solid #000;">
+            <table cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td style="background:#000;color:#FFFDF3;padding:4px 10px;font-family:'Archivo Black',sans-serif;font-size:10px;letter-spacing:0.15em;text-transform:uppercase;font-weight:900;">03</td>
+                <td width="12">&nbsp;</td>
+                <td><p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#000;">Emerging signals</p></td>
+              </tr>
+            </table>
+            <h2 style="margin:14px 0 4px 0;font-family:'Archivo Black',sans-serif;font-size:32px;line-height:1.05;color:#000;text-transform:uppercase;letter-spacing:-0.02em;">✨ Get in<br/><span style="color:#FF1300;">early.</span></h2>
+            <p style="margin:8px 0 18px 0;font-family:'Inter',sans-serif;font-size:13px;color:#000;opacity:0.7;">Small but rising — claim the trend before it's mainstream.</p>
           </td>
         </tr>
-        <tr><td style="padding:0 40px;">
+        <tr><td style="padding:0 40px;background:#FFFDF3;">
           <table cellpadding="0" cellspacing="0" border="0" width="100%">
             ${data.emerging.map((t) => renderTrendCard(t)).join('')}
           </table>
         </td></tr>` : ''}
 
-        ${data.upcomingMoments.length > 0 ? `
-        <!-- MOMENTS -->
+        ${data.creators.length > 0 ? `
+        <!-- CREATORS — 25 of the day -->
+        <tr><td style="background:#FFFDF3;height:32px;"></td></tr>
         <tr>
-          <td style="padding:32px 40px 8px;border-top:8px solid #f5f5f0;">
-            <p style="margin:0;font-size:10px;letter-spacing:0.15em;text-transform:uppercase;color:#ea580c;font-weight:700;">SECTION 04</p>
-            <h2 style="margin:4px 0 4px 0;font-family:Georgia,serif;font-size:24px;color:#111827;">📅 Komende moments (21 dagen)</h2>
-            <p style="margin:0 0 16px 0;font-size:12px;color:#6b7280;">Plan campaigns around these.</p>
+          <td style="padding:24px 40px 8px;background:#FFFDF3;border-top:2px solid #000;">
+            <table cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td style="background:#000;color:#FFFDF3;padding:4px 10px;font-family:'Archivo Black',sans-serif;font-size:10px;letter-spacing:0.15em;text-transform:uppercase;font-weight:900;">04</td>
+                <td width="12">&nbsp;</td>
+                <td><p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#000;">${data.creators.length} creators of the day</p></td>
+              </tr>
+            </table>
+            <h2 style="margin:14px 0 4px 0;font-family:'Archivo Black',sans-serif;font-size:32px;line-height:1.05;color:#000;text-transform:uppercase;letter-spacing:-0.02em;">📺 New creators<br/><span style="color:#FF1300;">to watch.</span></h2>
+            <p style="margin:8px 0 18px 0;font-family:'Inter',sans-serif;font-size:13px;color:#000;opacity:0.7;">Niche creators rotated daily by a different lens — fresh ${data.creators.length} every morning.</p>
           </td>
         </tr>
-        <tr><td style="padding:0 40px 32px;">
+        <tr><td style="padding:0 40px;background:#FFFDF3;">
+          <table cellpadding="0" cellspacing="0" border="0" width="100%">
+            ${(() => {
+              // Render as 2-col grid: 2 creators per <tr>
+              const rows: string[] = []
+              for (let i = 0; i < data.creators.length; i += 2) {
+                rows.push(
+                  `<tr>${renderCreatorCard(data.creators[i])}${
+                    data.creators[i + 1] ? renderCreatorCard(data.creators[i + 1]) : '<td style="width:50%"></td>'
+                  }</tr>`,
+                )
+              }
+              return rows.join('')
+            })()}
+          </table>
+        </td></tr>` : ''}
+
+        ${data.upcomingMoments.length > 0 ? `
+        <!-- MOMENTS -->
+        <tr><td style="background:#FFFDF3;height:32px;"></td></tr>
+        <tr>
+          <td style="padding:24px 40px 8px;background:#FFFDF3;border-top:2px solid #000;">
+            <table cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td style="background:#FF1300;color:#FFFDF3;padding:4px 10px;font-family:'Archivo Black',sans-serif;font-size:10px;letter-spacing:0.15em;text-transform:uppercase;font-weight:900;">05</td>
+                <td width="12">&nbsp;</td>
+                <td><p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#000;">Upcoming moments</p></td>
+              </tr>
+            </table>
+            <h2 style="margin:14px 0 4px 0;font-family:'Archivo Black',sans-serif;font-size:32px;line-height:1.05;color:#000;text-transform:uppercase;letter-spacing:-0.02em;">📅 Coming<br/><span style="color:#FF1300;">next 3 weeks.</span></h2>
+            <p style="margin:8px 0 18px 0;font-family:'Inter',sans-serif;font-size:13px;color:#000;opacity:0.7;">Plan campaigns and content around these.</p>
+          </td>
+        </tr>
+        <tr><td style="padding:0 40px 40px;background:#FFFDF3;">
           <table cellpadding="0" cellspacing="0" border="0" width="100%">
             ${data.upcomingMoments.map(renderMomentRow).join('')}
           </table>
         </td></tr>` : ''}
 
-        <!-- Footer -->
+        <!-- Footer in JackandAI black -->
         <tr>
-          <td style="padding:24px 40px 32px;border-top:8px solid #f5f5f0;text-align:center;">
-            <p style="margin:0 0 8px 0;font-size:11px;color:#9ca3af;">Generated ${new Date(data.generatedAt).toLocaleString('nl-NL')}</p>
-            <p style="margin:0;font-size:11px;">
-              <a href="https://action-culture-radar.vercel.app/culture-radar" style="color:#E3000F;text-decoration:none;font-weight:600;">→ Open live dashboard</a>
-              &nbsp;·&nbsp;
-              <a href="https://action-culture-radar.vercel.app/moments-radar" style="color:#E3000F;text-decoration:none;font-weight:600;">→ Moments Radar</a>
+          <td style="padding:40px 40px;background:#000000;text-align:center;">
+            <p style="margin:0 0 12px 0;font-family:'Archivo Black',sans-serif;font-size:32px;line-height:0.95;letter-spacing:-0.02em;color:#FFFDF3;text-transform:uppercase;">Jack<span style="color:#FF1300;">&amp;</span>A<span style="color:#FF1300;">!</span></p>
+            <p style="margin:0 0 4px 0;font-family:'Inter',sans-serif;font-size:11px;color:#FFFDF3;opacity:0.5;">Generated ${new Date(data.generatedAt).toLocaleString('nl-NL')} · Daily briefing from your AI agency</p>
+            <p style="margin:12px 0 0 0;font-family:'Inter',sans-serif;font-size:12px;">
+              <a href="https://action-culture-radar.vercel.app/culture-radar" style="color:#FF1300;text-decoration:none;font-weight:700;">→ Live dashboard</a>
+              <span style="color:#FFFDF3;opacity:0.3;">&nbsp;·&nbsp;</span>
+              <a href="https://action-culture-radar.vercel.app/moments-radar" style="color:#FF1300;text-decoration:none;font-weight:700;">→ Moments Radar</a>
             </p>
-            <p style="margin:16px 0 0 0;font-size:10px;color:#d1d5db;">Culture Radar — daily briefing from your AI agency</p>
           </td>
         </tr>
       </table>
