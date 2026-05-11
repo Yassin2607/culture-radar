@@ -27,6 +27,7 @@ import {
   loadActiveTrendsForRanking,
   applyTrendRanks,
   saveBrandBrief,
+  getTrendingSounds,
 } from '@/lib/culture-db'
 import {
   slugify,
@@ -254,13 +255,15 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        // Step 2: Action brief
+        // Step 2: Action brief (with currently trending sounds as menu)
+        const trendingSounds = await getTrendingSounds(week, 12)
         const brief = await generateActionBrief({
           name: name!.trim(),
           description: workingDescription,
           category: category!.trim(),
           brandExample: brandExample?.trim() ?? null,
           url: url?.trim() ?? null,
+          trendingSounds,
         })
         if (brief) await saveBrandBrief(rows[0].id, brief)
       } catch (err) {

@@ -448,6 +448,25 @@ export async function listTrends(args: ListTrendsArgs): Promise<TrendRowDB[]> {
   return rows
 }
 
+/**
+ * Load the currently trending sound-category trends for a given week.
+ * Used to give the Action brief generator a real menu of sounds to suggest.
+ * Returns name + short description ordered by signal strength.
+ */
+export async function getTrendingSounds(week: string, limit = 12): Promise<Array<{ name: string; description: string }>> {
+  const rows = (await sql().query(
+    `SELECT name, description
+       FROM culture_trends
+      WHERE rank_week = $1
+        AND status = 'active'
+        AND (category = 'sound' OR content_type = 'sound')
+      ORDER BY popularity_score DESC, freshness_score DESC
+      LIMIT $2`,
+    [week, limit],
+  )) as Array<{ name: string; description: string }>
+  return rows
+}
+
 /** Write a generated Action brief back to a trend row. */
 export async function saveBrandBrief(trendId: string, brief: ActionBrief): Promise<void> {
   await sql().query(

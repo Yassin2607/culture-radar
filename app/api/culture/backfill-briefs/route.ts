@@ -19,7 +19,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { sql, saveBrandBrief } from '@/lib/culture-db'
+import { sql, saveBrandBrief, getTrendingSounds } from '@/lib/culture-db'
 import { generateActionBrief } from '@/lib/culture-action-brief'
 import { isoWeek } from '@/lib/culture-radar'
 
@@ -86,6 +86,9 @@ export async function POST(req: NextRequest) {
   let briefed = 0
   let failed = 0
 
+  // Load trending sounds ONCE — same menu for every brief in this batch.
+  const trendingSounds = await getTrendingSounds(week, 12)
+
   // Concurrency-limited loop
   let idx = 0
   async function worker() {
@@ -102,6 +105,7 @@ export async function POST(req: NextRequest) {
           category: row.category,
           brandExample,
           url,
+          trendingSounds,
         })
         if (brief) {
           await saveBrandBrief(row.id, brief)

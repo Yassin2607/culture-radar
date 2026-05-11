@@ -884,7 +884,7 @@ function TrendRow({ trend, view }: { trend: CultureTrend; view: View }) {
             )}
           </div>
 
-          {/* Content angle + products */}
+          {/* Content angle + sound + products */}
           <div className="space-y-2">
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-0.5" style={{ fontFamily: 'var(--font-display)' }}>
@@ -892,6 +892,14 @@ function TrendRow({ trend, view }: { trend: CultureTrend; view: View }) {
               </p>
               <p className="text-xs text-gray-700">{brief.contentAngle}</p>
             </div>
+            {brief.suggestedSound && (
+              <div className="flex items-start gap-1.5 text-xs">
+                <span style={{ color: '#7c3aed' }}>♪</span>
+                <p className="text-gray-700">
+                  <span className="font-semibold text-gray-800">Sound:</span> {brief.suggestedSound}
+                </p>
+              </div>
+            )}
             {brief.productCategories?.length > 0 && (
               <div className="flex flex-wrap gap-1">
                 {brief.productCategories.map((cat) => (
