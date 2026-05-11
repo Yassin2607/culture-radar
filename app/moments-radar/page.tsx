@@ -139,18 +139,49 @@ export default function MomentsRadarPage() {
     return { standardCount, culturalCount }
   }, [moments])
 
-  // Group moments by month for the timeline view
+  // For sort/group, pick the date the UI actually shows: the country's
+  // date when a country filter is active, otherwise the earliest future
+  // date across all countries. Keeps Vaderdag (21 JUN for NL) from
+  // appearing between Cannes (13 MAY) and Eurovision (16 MAY).
+  const today = useMemo(() => new Date().toISOString().slice(0, 10), [])
+
+  const effectiveDateFor = useCallback(
+    (m: CultureMoment): string | null => {
+      if (country && m.scope !== 'global') {
+        const cd = m.countryDates.find((d) => d.country === country)
+        if (cd) return cd.date
+      }
+      // Pick earliest future date — same heuristic the row uses for display
+      const future = m.countryDates
+        .map((d) => d.date)
+        .filter((d) => d >= today)
+        .sort()
+      if (future.length > 0) return future[0]
+      return m.nextOccurrence
+    },
+    [country, today],
+  )
+
+  // Group moments by month for the timeline view, sorted by effective date
   const monthGroups = useMemo(() => {
+    const withDates = moments
+      .map((m) => ({ moment: m, date: effectiveDateFor(m) }))
+      .sort((a, b) => {
+        if (!a.date && !b.date) return 0
+        if (!a.date) return 1
+        if (!b.date) return -1
+        return a.date.localeCompare(b.date)
+      })
+
     const groups: Record<string, CultureMoment[]> = {}
-    for (const m of moments) {
-      const date = m.nextOccurrence ? new Date(m.nextOccurrence) : null
+    for (const { moment, date } of withDates) {
       const key = date
-        ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+        ? `${date.slice(0, 4)}-${date.slice(5, 7)}`
         : 'no-date'
-      ;(groups[key] ??= []).push(m)
+      ;(groups[key] ??= []).push(moment)
     }
     return Object.entries(groups).sort(([a], [b]) => a.localeCompare(b))
-  }, [moments])
+  }, [moments, effectiveDateFor])
 
   return (
     <div className="min-h-screen">
