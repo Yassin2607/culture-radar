@@ -352,7 +352,7 @@ export function FeaturedTrend({ trend }: { trend: TrendWithVariants }) {
             )}
           </div>
         )}
-        {expanded && trend.mindmap && <MindmapCompact mindmap={trend.mindmap} />}
+        {trend.mindmap && <MindmapCompact mindmap={trend.mindmap} />}
         {trend.exampleUrls.length > 0 && (
           <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
             {sortUrls(trend.exampleUrls).slice(0, expanded ? 8 : 3).map((url, i) => {
@@ -423,6 +423,7 @@ export function CompactTrend({ trend }: { trend: TrendWithVariants }) {
               {brief.contentAngle.slice(0, 140)}
             </p>
           )}
+          {!expanded && trend.mindmap && <MindmapTeaser mindmap={trend.mindmap} />}
         </div>
         <div style={{ flexShrink: 0, padding: '12px 16px', borderLeft: '1px solid #00000010', display: 'flex', flexDirection: 'column', gap: 4, justifyContent: 'center', minWidth: 110 }}>
           {trend.exampleUrls.slice(0, 2).map((url, i) => {
@@ -510,6 +511,35 @@ export function CompactTrend({ trend }: { trend: TrendWithVariants }) {
         </div>
       )}
     </article>
+  )
+}
+
+// ── Mindmap teaser (one-line preview for Compact rows) ────────────────────
+
+function MindmapTeaser({ mindmap }: { mindmap: NonNullable<CultureTrend['mindmap']> }) {
+  // Pick the first non-empty section, prefer origin > spreading > adjacent
+  const order: Array<{ key: keyof typeof mindmap; label: string }> = [
+    { key: 'origin', label: 'ORIGIN' },
+    { key: 'spreading', label: 'SPREADING' },
+    { key: 'adjacent', label: 'ADJACENT' },
+    { key: 'brandPlays', label: 'BRAND PLAYS' },
+    { key: 'variations', label: 'VARIATIONS' },
+    { key: 'searches', label: 'SEARCHES' },
+  ]
+  const picked = order.find((o) => (mindmap[o.key] ?? []).length > 0)
+  if (!picked) return null
+  const first = mindmap[picked.key]![0]
+  const count = Object.values(mindmap).reduce((sum, arr) => sum + arr.length, 0)
+
+  return (
+    <p style={{ margin: '4px 0 0 0', fontSize: 10, color: '#6b6b6b', lineHeight: 1.4 }}>
+      <strong style={{ fontFamily: 'var(--font-jai-display)', fontSize: 9, letterSpacing: '0.1em', color: '#000' }}>
+        🧠 {picked.label}:{' '}
+      </strong>
+      <span style={{ color: '#1a1a1a' }}>{first.label}</span>
+      {first.detail && <span> — {first.detail.slice(0, 80)}</span>}
+      {count > 1 && <span style={{ color: '#9ca3af' }}> · +{count - 1} more</span>}
+    </p>
   )
 }
 
