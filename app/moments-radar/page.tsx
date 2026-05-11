@@ -60,6 +60,9 @@ export default function MomentsRadarPage() {
   const [moments, setMoments] = useState<CultureMoment[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshStage, setRefreshStage] = useState<string | null>(null)
+  const [refreshResult, setRefreshResult] = useState<{ momentsUpserted: number; briefed: number } | null>(null)
 
   const loadMoments = useCallback(async () => {
     setLoading(true)
@@ -84,6 +87,51 @@ export default function MomentsRadarPage() {
   useEffect(() => {
     loadMoments()
   }, [loadMoments])
+
+  const runRefresh = async () => {
+    if (!confirm('Run Perplexity discovery for new cultural moments? Takes ~2 min and uses Gemini + Perplexity credits.')) return
+    setRefreshing(true)
+    setRefreshResult(null)
+    setError(null)
+    setRefreshStage('Discovering moments via Perplexity…')
+    try {
+      const res = await apiFetch('/api/moments/fetch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ triggeredBy: 'manual-ui' }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`)
+      const momentsUpserted = (data.momentsUpserted ?? 0) as number
+
+      setRefreshStage('Generating Action briefs…')
+      let totalBriefed = 0
+      for (let pass = 0; pass < 2; pass++) {
+        try {
+          const briefRes = await apiFetch('/api/moments/backfill-briefs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ limit: 10 }),
+          })
+          if (briefRes.ok) {
+            const briefData = (await briefRes.json()) as { briefed: number; processed: number }
+            totalBriefed += briefData.briefed
+            if (briefData.processed === 0) break
+          }
+        } catch {
+          /* best-effort */
+        }
+      }
+
+      setRefreshResult({ momentsUpserted, briefed: totalBriefed })
+      await loadMoments()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setRefreshing(false)
+      setTimeout(() => setRefreshStage(null), 5000)
+    }
+  }
 
   const stats = useMemo(() => {
     const standardCount = moments.filter((m) => m.tier === 'standard').length
@@ -126,6 +174,19 @@ export default function MomentsRadarPage() {
               in the next {horizon} days.
             </p>
           </div>
+          <button
+            onClick={runRefresh}
+            disabled={refreshing}
+            className="px-4 py-2 rounded-lg text-sm font-medium transition-all disabled:opacity-50"
+            style={{
+              fontFamily: 'var(--font-body)',
+              backgroundColor: 'var(--action-red)',
+              color: '#ffffff',
+            }}
+            title="Discover new cultural moments via Perplexity + generate Action briefs"
+          >
+            {refreshing ? (refreshStage ?? 'Working…') : 'Refresh from sources'}
+          </button>
         </div>
       </div>
 
@@ -133,6 +194,12 @@ export default function MomentsRadarPage() {
         {error && (
           <div className="border border-red-200 bg-red-50 text-red-800 text-sm rounded-lg px-4 py-3">
             {error}
+          </div>
+        )}
+
+        {refreshResult && (
+          <div className="border border-emerald-200 bg-emerald-50 text-emerald-900 text-sm rounded-lg px-4 py-3">
+            Discovery complete. {refreshResult.momentsUpserted} moments added/updated, {refreshResult.briefed} Action briefs generated.
           </div>
         )}
 

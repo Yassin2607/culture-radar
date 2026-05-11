@@ -21,6 +21,7 @@ import { POST as fetchHandler } from '@/app/api/culture/fetch/route'
 import { POST as backfillBriefsHandler } from '@/app/api/culture/backfill-briefs/route'
 import { POST as momentsFetchHandler } from '@/app/api/moments/fetch/route'
 import { POST as momentsBriefsHandler } from '@/app/api/moments/backfill-briefs/route'
+import { sql } from '@/lib/culture-db'
 
 // Cron jobs are long-running. Max out within Hobby plan budget.
 export const maxDuration = 300
@@ -38,22 +39,37 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   }
 
-  // ── Monthly check: on the 1st of the month, also refresh Moments Radar ─
+  // ── Monthly check: if no moments fetch in the last 25 days, run one ───
   // Vercel Hobby plan limits us to 1 cron, so we piggy-back the monthly
   // moments refresh on top of the daily Culture Radar one. Moments are
   // cheaper (5 Perplexity queries, no Firecrawl), ~60-90s.
-  const isMonthStart = new Date().getUTCDate() === 1
+  //
+  // We previously gated on "day 1 of month" which meant a mid-month deploy
+  // would skip an entire month. Now we check actual elapsed time since the
+  // last successful moments-source scrape — robust to deploy timing.
+  const lastFetchRows = (await sql().query(
+    `SELECT MAX(last_scraped_at) AS last
+       FROM culture_sources
+      WHERE source_type = 'perplexity_moment_query'
+        AND last_scrape_status = 'ok'`,
+  )) as Array<{ last: string | null }>
+  const lastMomentsFetch = lastFetchRows[0]?.last ? new Date(lastFetchRows[0].last) : null
+  const daysSinceLast = lastMomentsFetch
+    ? Math.floor((Date.now() - lastMomentsFetch.getTime()) / 86_400_000)
+    : Infinity
+  const shouldRunMoments = daysSinceLast >= 25
+  const isMonthStart = shouldRunMoments  // legacy name kept in response body
 
   let momentsSummary: unknown = null
   let momentsError: string | null = null
   let momentsBriefsBriefed = 0
 
-  if (isMonthStart) {
+  if (shouldRunMoments) {
     try {
       const momentsFetchReq = new NextRequest(new URL('http://internal/api/moments/fetch'), {
         method: 'POST',
         headers: { authorization: expectedBearer, 'content-type': 'application/json' },
-        body: JSON.stringify({ triggeredBy: 'cron-monthly-1st' }),
+        body: JSON.stringify({ triggeredBy: `cron-monthly-${daysSinceLast}d-since-last` }),
       })
       const r = await momentsFetchHandler(momentsFetchReq)
       const d = (await r.json()) as { error?: string }
