@@ -21,7 +21,7 @@ import { listTrends, rowToTrend } from '@/lib/culture-db'
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url)
-  const view = (searchParams.get('view') ?? 'all') as 'daily' | 'weekly' | 'all'
+  const view = (searchParams.get('view') ?? 'all') as 'daily' | 'weekly' | 'all' | 'emerging'
   const category = searchParams.get('category')
   const week = searchParams.get('week') ?? isoWeek()
   const limit = Math.min(Number(searchParams.get('limit') ?? '100'), 200)

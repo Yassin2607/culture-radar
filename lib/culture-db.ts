@@ -405,7 +405,7 @@ export async function finishFetchRun(args: {
 
 export interface ListTrendsArgs {
   week: string
-  view: 'daily' | 'weekly' | 'all'
+  view: 'daily' | 'weekly' | 'all' | 'emerging'
   category: string | null
   limit: number
   includeArchived: boolean
@@ -428,6 +428,12 @@ export async function listTrends(args: ListTrendsArgs): Promise<TrendRowDB[]> {
   } else if (args.view === 'weekly') {
     conditions.push('weekly_rank IS NOT NULL')
     orderBy = 'weekly_rank ASC'
+  } else if (args.view === 'emerging') {
+    // Recently discovered, not yet popular = rising signal.
+    // Popularity < 7 = not mainstream. Freshness >= 7 = seen within ~7 days.
+    conditions.push('popularity_score < 7')
+    conditions.push('freshness_score >= 7')
+    orderBy = 'first_seen_at DESC, popularity_score DESC'
   } else {
     orderBy = 'popularity_score DESC, freshness_score DESC'
   }
