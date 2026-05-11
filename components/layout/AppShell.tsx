@@ -14,7 +14,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const isOpenAdminRoute =
     pathname.startsWith('/culture-radar') || pathname.startsWith('/moments-radar')
 
-  if (isLoginPage) {
+  // The standalone report page renders as a sharable newsletter — no
+  // sidebar, no chrome.
+  const isStandaloneReport = pathname === '/culture-radar/report'
+
+  if (isLoginPage || isStandaloneReport) {
     return <>{children}</>
   }
 
