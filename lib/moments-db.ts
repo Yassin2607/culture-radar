@@ -52,7 +52,12 @@ export async function listMoments(args: ListMomentsArgs = {}): Promise<MomentRow
   const conditions: string[] = []
   const params: unknown[] = []
 
-  if (!args.includeArchived) conditions.push(`status <> 'archived'`)
+  if (!args.includeArchived) {
+    conditions.push(`status <> 'archived'`)
+    // Hide moments whose next occurrence is already in the past. Past
+    // moments stay in the DB (for history) but don't clutter the planner.
+    conditions.push(`(next_occurrence IS NULL OR next_occurrence >= CURRENT_DATE)`)
+  }
 
   if (args.tier) {
     params.push(args.tier)
