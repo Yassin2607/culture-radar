@@ -11,7 +11,89 @@
   --sidebar-border: #1e2128;
   --font-display: 'Barlow Condensed', sans-serif;
   --font-body: 'DM Sans', sans-serif;
+
+  /* ── JackandAI brand (used in Culture/Moments Radar) ───────────────── */
+  --jai-red: #FF1300;
+  --jai-red-dark: #cc0e00;
+  --jai-black: #000000;
+  --jai-cream: #FFFDF3;
+  --jai-cream-2: #FAF6E6;        /* subtle warmer cream for layered backgrounds */
+  --jai-ink: #1a1a1a;             /* not quite-black for body text on cream */
+  --jai-muted: #6b6b6b;
+
+  --font-jai-display: 'Archivo Black', 'Archivo', sans-serif;
+  --font-jai-serif:   'Newsreader', Georgia, serif;
+  --font-jai-body:    'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+
+  /* Spacing scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 16px;
+  --space-4: 32px;
+  --space-5: 64px;
+  --space-6: 96px;
 }
+
+/* ── JackandAI scope — apply to /culture-radar and /moments-radar ─────────
+   We don't override globally because legacy Action tools keep the
+   Action brand. The .jai-app class is opted in by the Culture Radar
+   layout wrapper.
+─────────────────────────────────────────────────────────────────────── */
+.jai-app {
+  background: var(--jai-cream);
+  color: var(--jai-ink);
+  font-family: var(--font-jai-body);
+  font-feature-settings: 'ss01', 'cv11';
+}
+.jai-app h1, .jai-app h2, .jai-app h3 {
+  font-family: var(--font-jai-display);
+  letter-spacing: -0.015em;
+  color: var(--jai-black);
+}
+.jai-app .jai-serif {
+  font-family: var(--font-jai-serif);
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+.jai-app .jai-mono-label {
+  font-family: var(--font-jai-display);
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 10px;
+}
+.jai-card {
+  background: #ffffff;
+  border: 1px solid var(--jai-black);
+  border-radius: 0;             /* hard edges — JackandAI feel */
+}
+.jai-card-hover {
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+.jai-card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 6px 6px 0 var(--jai-black);
+}
+.jai-btn {
+  font-family: var(--font-jai-display);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 11px;
+  padding: 10px 16px;
+  background: var(--jai-black);
+  color: var(--jai-cream);
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.jai-btn:hover { background: var(--jai-red); }
+.jai-btn-red { background: var(--jai-red); color: var(--jai-cream); }
+.jai-btn-red:hover { background: var(--jai-black); }
+.jai-btn-outline {
+  background: transparent;
+  color: var(--jai-black);
+  border: 1.5px solid var(--jai-black);
+}
+.jai-btn-outline:hover { background: var(--jai-black); color: var(--jai-cream); }
 
 @theme inline {
   --color-background: var(--background);

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { apiFetch } from '@/lib/api-client'
 import type { CultureSource, CultureTrend } from '@/types/culture'
 import { styleFor, LIFECYCLE_VISUAL } from './category-style'
+import { HeroTrend, FeaturedTrend, CompactTrend } from './trend-cards'
 
 type View = 'daily' | 'weekly' | 'all' | 'emerging' | 'inspiration'
 
@@ -305,73 +306,44 @@ export default function CultureRadarPage() {
   )
 
   return (
-    <div className="min-h-screen">
-      {/* ── Header ── */}
-      <div className="border-b border-gray-200 bg-white px-8 py-5" style={{ paddingRight: 240 }}>
-        <div className="flex items-center justify-between">
+    <div className="jai-app" style={{ minHeight: '100vh' }}>
+      {/* ── JackandAI hero header ── */}
+      <div style={{ background: '#000', color: '#FFFDF3', padding: '40px 40px 28px', paddingRight: 240 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16 }}>
           <div>
-            <h1
-              className="font-bold text-gray-900"
-              style={{
-                fontFamily: 'var(--font-display)',
-                fontSize: 26,
-                letterSpacing: '0.01em',
-                lineHeight: 1.1,
-              }}
-            >
-              Culture Radar
+            <p className="jai-mono-label" style={{ color: '#FF1300', margin: 0 }}>JACK&amp;A! × ACTION</p>
+            <h1 style={{
+              fontFamily: 'var(--font-jai-display)',
+              fontSize: 56,
+              lineHeight: 0.92,
+              margin: '12px 0 4px 0',
+              color: '#FFFDF3',
+              textTransform: 'uppercase',
+              letterSpacing: '-0.025em',
+            }}>
+              Culture<br/>Radar<span style={{ color: '#FF1300' }}>.</span>
             </h1>
-            <p className="text-sm text-gray-500 mt-1">
-              Real-time cultural trends across {stats.activeSources} curated sources. Week{' '}
-              {week || '—'}.
+            <p style={{ margin: '8px 0 0 0', fontSize: 13, color: '#FFFDF3', opacity: 0.7 }}>
+              {stats.activeSources} sources · week {week || '—'} · {trends.length} active trends
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            {/* Report trend button */}
-            <button
-              onClick={openModal}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all border"
-              style={{
-                fontFamily: 'var(--font-body)',
-                borderColor: '#6b7280',
-                color: '#374151',
-                backgroundColor: '#ffffff',
-              }}
-              title="Spotted a trend in the wild? Add it manually."
-            >
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 14 14"
-                fill="none"
-                xmlns="http://www.w3.org/2000/svg"
-              >
-                <path
-                  d="M7 1v12M1 7h12"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                />
-              </svg>
-              Report trend
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={openModal} className="jai-btn jai-btn-outline" style={{ borderColor: '#FFFDF3', color: '#FFFDF3' }}>
+              + Report trend
             </button>
-
             <button
               onClick={handleRefresh}
               disabled={refreshing}
-              className="px-4 py-2 rounded-lg text-sm font-medium transition-all disabled:opacity-50"
-              style={{
-                fontFamily: 'var(--font-body)',
-                backgroundColor: 'var(--action-red)',
-                color: '#ffffff',
-              }}
-              title="Scrapes all sources + auto-generates Action briefs for top trends"
+              className="jai-btn jai-btn-red"
+              style={{ opacity: refreshing ? 0.6 : 1 }}
             >
-              {refreshing ? (refreshStage ?? 'Working…') : 'Refresh from sources'}
+              {refreshing ? (refreshStage ?? 'Working…') : '↻ Refresh from sources'}
             </button>
           </div>
         </div>
       </div>
+      {/* Red accent strip */}
+      <div style={{ height: 6, background: '#FF1300' }} />
 
       {/* ── Body ── */}
       <div className="px-8 py-6 space-y-6">
@@ -526,22 +498,44 @@ export default function CultureRadarPage() {
 
         {/* Trends list */}
         {loading ? (
-          <p className="text-sm text-gray-500">Loading trends…</p>
+          <div style={{ padding: 48, textAlign: 'center' }}>
+            <p className="jai-mono-label" style={{ color: '#FF1300', margin: 0 }}>Loading…</p>
+            <p className="jai-serif" style={{ margin: '8px 0 0 0', fontSize: 18 }}>Pulling fresh signals from the culture firehose.</p>
+          </div>
         ) : trends.length === 0 ? (
-          <div className="border border-dashed border-gray-300 bg-white rounded-lg px-6 py-12 text-center">
-            <p className="text-sm text-gray-600">
-              No trends yet for {week || 'this week'}. Click{' '}
-              <strong>Refresh from sources</strong> to run the first scrape, or{' '}
-              <strong>Report trend</strong> to add one manually.
+          <div className="jai-card" style={{ padding: 48, textAlign: 'center', background: '#FAF6E6' }}>
+            <p className="jai-mono-label" style={{ color: '#FF1300', margin: 0 }}>Empty state</p>
+            <p style={{ fontFamily: 'var(--font-jai-display)', fontSize: 28, margin: '12px 0 8px 0', textTransform: 'uppercase', color: '#000' }}>
+              No trends yet.<span style={{ color: '#FF1300' }}>.</span>
+            </p>
+            <p style={{ fontSize: 14, color: '#6b6b6b', margin: 0 }}>
+              Hit <strong>Refresh from sources</strong> for the first scrape, or <strong>Report trend</strong> to add manually.
             </p>
           </div>
-        ) : (
-          <div className="space-y-2">
-            {trends.map((t) => (
-              <TrendRow key={t.id} trend={t} view={view} />
-            ))}
-          </div>
-        )}
+        ) : (() => {
+          // Render with hierarchy for Daily view: hero (#1), featured (#2-3), compact (#4+)
+          // Other views render compact for everything.
+          const showHierarchy = view === 'daily'
+          if (!showHierarchy) {
+            return (
+              <div>{trends.map((t) => <CompactTrend key={t.id} trend={t} />)}</div>
+            )
+          }
+          const hero = trends.find((t) => t.dailyRank === 1)
+          const featured = trends.filter((t) => t.dailyRank === 2 || t.dailyRank === 3)
+          const rest = trends.filter((t) => (t.dailyRank ?? 999) > 3)
+          return (
+            <>
+              {hero && <HeroTrend trend={hero} />}
+              {featured.length > 0 && (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16, marginBottom: 24 }}>
+                  {featured.map((t) => <FeaturedTrend key={t.id} trend={t} />)}
+                </div>
+              )}
+              <div>{rest.map((t) => <CompactTrend key={t.id} trend={t} />)}</div>
+            </>
+          )
+        })()}
 
         {showSources && <SourceTable sources={sources} />}
       </div>
