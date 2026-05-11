@@ -242,20 +242,17 @@ export async function saveDailyCohort(
   let inserted = 0
 
   for (const c of creators) {
-    // Verify the profile + video URLs to drop hallucinations
-    const candidates = [c.profileUrl, ...c.exampleVideoUrls].filter(Boolean)
-    let verifiedProfile = c.profileUrl
+    // Verify only the video URLs (profile URLs use a different shape —
+    // /@handle without /video/ — so verifyVideoUrls always rejects them).
     let verifiedVideos = c.exampleVideoUrls
-    if (candidates.length > 0) {
-      const results = await verifyVideoUrls(candidates, { concurrency: 3, timeoutMs: 4000 })
-      const valid = new Set(results.filter((r) => r.ok).map((r) => r.url))
-      if (!valid.has(c.profileUrl)) {
-        // Profile URL invalid — skip this creator entirely
-        continue
-      }
-      verifiedProfile = c.profileUrl
-      verifiedVideos = c.exampleVideoUrls.filter((u) => valid.has(u))
+    if (c.exampleVideoUrls.length > 0) {
+      const results = await verifyVideoUrls(c.exampleVideoUrls, {
+        concurrency: 3,
+        timeoutMs: 4000,
+      })
+      verifiedVideos = results.filter((r) => r.ok).map((r) => r.url)
     }
+    const verifiedProfile = c.profileUrl
 
     try {
       await sql().query(
