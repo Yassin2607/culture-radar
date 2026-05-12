@@ -23,6 +23,7 @@ import { POST as verifyUrlsHandler } from '@/app/api/culture/verify-urls/route'
 import { POST as scanCreatorsHandler } from '@/app/api/culture/scan-creators/route'
 import { POST as recomputeBundlesHandler } from '@/app/api/culture/recompute-bundles/route'
 import { POST as enrichMindmapsHandler } from '@/app/api/culture/enrich-mindmaps/route'
+import { POST as enrichCountriesHandler } from '@/app/api/culture/enrich-countries/route'
 import { POST as momentsFetchHandler } from '@/app/api/moments/fetch/route'
 import { POST as momentsBriefsHandler } from '@/app/api/moments/backfill-briefs/route'
 import { POST as momentsEnrichHandler } from '@/app/api/moments/enrich-topics/route'
@@ -197,6 +198,27 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // ── Step 2c2: Country relevance enrichment (geo filter accuracy) ─────
+  // Tag untagged trends with the Action markets they're relevant to.
+  // Trends tagged "none" (UK football, US news) get archived.
+  let countriesTagged = 0
+  let countriesDropped = 0
+  if (!fetchError) {
+    try {
+      const countryReq = new NextRequest(new URL('http://internal/api/culture/enrich-countries'), {
+        method: 'POST',
+        headers: { authorization: expectedBearer, 'content-type': 'application/json' },
+        body: JSON.stringify({ limit: 60 }),
+      })
+      const r = await enrichCountriesHandler(countryReq)
+      const d = (await r.json()) as { tagged?: number; dropped?: number }
+      countriesTagged = d.tagged ?? 0
+      countriesDropped = d.dropped ?? 0
+    } catch {
+      /* best-effort */
+    }
+  }
+
   // ── Step 2d: Mindmap enrichment (Context & connections per trend) ─────
   // One batch of 12 trends per cron run, ranked by daily_rank. The top
   // hero/featured trends get a mindmap within one day of going active.
@@ -256,6 +278,8 @@ export async function GET(req: NextRequest) {
     bundlesUpdated,
     bundlesCleared,
     mindmapsEnriched,
+    countriesTagged,
+    countriesDropped,
     isMonthStart,
     momentsError,
     momentsSummary,
