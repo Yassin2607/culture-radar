@@ -108,6 +108,7 @@ export default function CultureRadarPage() {
   const [view, setView] = useState<View>('daily')
   const [category, setCategory] = useState<string>('')
   const [country, setCountry] = useState<string>('')
+  const [search, setSearch] = useState<string>('')
   const [trends, setTrends] = useState<CultureTrend[]>([])
   const [sources, setSources] = useState<CultureSource[]>([])
   const [week, setWeek] = useState<string>('')
@@ -305,6 +306,20 @@ export default function CultureRadarPage() {
     [trends],
   )
 
+  // Free-text filter (name, hashtags, sourceNames, brief.contentAngle)
+  const filteredTrends = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    if (!q) return trends
+    return trends.filter((t) => {
+      if (t.name.toLowerCase().includes(q)) return true
+      if (t.description.toLowerCase().includes(q)) return true
+      if (t.hashtags.some((h) => h.toLowerCase().includes(q))) return true
+      if (t.sourceNames.some((n) => n.toLowerCase().includes(q))) return true
+      if (t.brandBrief?.contentAngle.toLowerCase().includes(q)) return true
+      return false
+    })
+  }, [trends, search])
+
   return (
     <div className="jai-app" style={{ minHeight: '100vh' }}>
       {/* ── JackandAI hero header ── */}
@@ -323,11 +338,24 @@ export default function CultureRadarPage() {
             }}>
               Culture<br/>Radar<span style={{ color: '#FF1300' }}>.</span>
             </h1>
-            <p style={{ margin: '8px 0 0 0', fontSize: 13, color: '#FFFDF3', opacity: 0.7 }}>
-              {stats.activeSources} sources · week {week || '—'} · {trends.length} active trends
-            </p>
+            <div style={{ marginTop: 14, display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+              <HeaderStat label="Week" value={week || '—'} />
+              <HeaderStat label="Active trends" value={trends.length} />
+              <HeaderStat label="Multi-source" value={stats.multiSource} hint={`${Math.round((stats.multiSource / Math.max(trends.length, 1)) * 100)}%`} />
+              <HeaderStat label="Sources" value={`${stats.okSources}/${stats.activeSources}`} />
+              <HeaderStat label="Spotted manually" value={manualTrends.length} />
+            </div>
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <a
+              href="/culture-radar/report"
+              target="_blank"
+              rel="noreferrer"
+              className="jai-btn jai-btn-outline"
+              style={{ borderColor: '#FFFDF3', color: '#FFFDF3', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+            >
+              📰 Today&apos;s magazine →
+            </a>
             <button onClick={openModal} className="jai-btn jai-btn-outline" style={{ borderColor: '#FFFDF3', color: '#FFFDF3' }}>
               + Report trend
             </button>
@@ -375,125 +403,142 @@ export default function CultureRadarPage() {
           </div>
         )}
 
-        {/* Stats */}
-        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-          <StatCard label="Trends this week" value={trends.length} />
-          <StatCard
-            label="Multi-source validated"
-            value={stats.multiSource}
-            hint="2+ sources confirmed"
-          />
-          <StatCard label="Active sources" value={stats.activeSources} />
-          <StatCard
-            label="Spotted in the wild"
-            value={manualTrends.length}
-            hint="Manually reported"
-          />
-        </div>
+        {/* Sticky filter bar */}
+        <div
+          style={{
+            position: 'sticky',
+            top: 0,
+            zIndex: 30,
+            background: '#FFFDF3',
+            margin: '0 -32px',
+            padding: '12px 32px',
+            borderBottom: '1px solid #00000015',
+            boxShadow: '0 2px 8px #00000008',
+          }}
+        >
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+            {/* Unified red tabs */}
+            <div style={{ display: 'inline-flex', border: '1px solid #00000020', background: '#FFFDF3' }}>
+              {(['daily', 'weekly', 'inspiration', 'emerging', 'all'] as const).map((v) => (
+                <button
+                  key={v}
+                  onClick={() => setView(v)}
+                  title={
+                    v === 'emerging'
+                      ? 'Rising trends — low popularity but very fresh'
+                      : v === 'inspiration'
+                        ? 'Format-led inspiration — ways to MAKE content'
+                        : undefined
+                  }
+                  style={{
+                    fontFamily: 'var(--font-jai-display)',
+                    fontSize: 11,
+                    letterSpacing: '0.1em',
+                    padding: '8px 14px',
+                    textTransform: 'uppercase',
+                    background: view === v ? '#000' : 'transparent',
+                    color: view === v ? '#FFFDF3' : '#1a1a1a',
+                    border: 'none',
+                    cursor: 'pointer',
+                    position: 'relative',
+                    borderRight: '1px solid #00000010',
+                  }}
+                >
+                  {view === v && (
+                    <span style={{
+                      position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: '#FF1300',
+                    }} />
+                  )}
+                  {v === 'daily' ? 'Today' : v === 'weekly' ? 'This week' : v === 'inspiration' ? 'Inspiration' : v === 'emerging' ? 'Emerging' : 'All'}
+                </button>
+              ))}
+            </div>
 
-        {/* View tabs */}
-        <div className="flex items-center justify-between">
-          <div className="inline-flex rounded-lg border border-gray-200 bg-white p-1 flex-wrap">
-            {(['daily', 'weekly', 'inspiration', 'emerging', 'all'] as const).map((v) => (
-              <button
-                key={v}
-                onClick={() => setView(v)}
-                className="px-3 py-1.5 text-sm rounded-md transition-all"
+            {/* Search */}
+            <div style={{ position: 'relative', flex: '1 1 220px', minWidth: 200, maxWidth: 360 }}>
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search trends, hashtags, brands…"
                 style={{
+                  width: '100%',
+                  padding: '8px 12px 8px 30px',
+                  border: '1px solid #00000020',
+                  background: '#FFFDF3',
                   fontFamily: 'var(--font-body)',
-                  backgroundColor:
-                    view === v
-                      ? v === 'emerging'
-                        ? '#7c3aed'
-                        : v === 'inspiration'
-                          ? '#0891b2'
-                          : 'var(--action-red)'
-                      : 'transparent',
-                  color: view === v ? '#ffffff' : '#4a4f5c',
-                  fontWeight: view === v ? 600 : 500,
+                  fontSize: 13,
+                  color: '#1a1a1a',
+                  outline: 'none',
                 }}
-                title={
-                  v === 'emerging'
-                    ? 'Rising trends — low popularity but very fresh'
-                    : v === 'inspiration'
-                      ? 'Format-led inspiration — ways to MAKE content (editing tricks, video formats, visual signatures)'
-                      : undefined
-                }
-              >
-                {v === 'daily'
-                  ? 'Today (Top 10)'
-                  : v === 'weekly'
-                    ? 'This week (Top 50)'
-                    : v === 'inspiration'
-                      ? '💡 Inspiration'
-                      : v === 'emerging'
-                        ? '✨ Emerging'
-                        : 'All'}
-              </button>
-            ))}
+              />
+              <span style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af', fontSize: 13, pointerEvents: 'none' }}>🔍</span>
+              {search && (
+                <button
+                  onClick={() => setSearch('')}
+                  style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', background: 'transparent', border: 'none', cursor: 'pointer', color: '#6b6b6b', fontSize: 14, padding: 4 }}
+                  aria-label="Clear search"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+
+            {/* Country select */}
+            <select
+              value={country}
+              onChange={(e) => setCountry(e.target.value)}
+              style={{
+                padding: '8px 10px',
+                fontFamily: 'var(--font-body)',
+                fontSize: 12,
+                border: '1px solid #00000020',
+                background: '#FFFDF3',
+                color: '#1a1a1a',
+                cursor: 'pointer',
+              }}
+            >
+              <option value="">🇪🇺 All EU</option>
+              {COUNTRIES.map((c) => (
+                <option key={c.code} value={c.code}>{c.flag} {c.name}</option>
+              ))}
+            </select>
+
+            {/* Category select */}
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              style={{
+                padding: '8px 10px',
+                fontFamily: 'var(--font-body)',
+                fontSize: 12,
+                border: '1px solid #00000020',
+                background: '#FFFDF3',
+                color: '#1a1a1a',
+                cursor: 'pointer',
+              }}
+            >
+              {CATEGORIES.map((c) => (
+                <option key={c.value} value={c.value}>{c.value === '' ? 'All categories' : c.label}</option>
+              ))}
+            </select>
+
+            <button
+              onClick={() => setShowSources((s) => !s)}
+              style={{
+                marginLeft: 'auto',
+                fontFamily: 'var(--font-jai-display)',
+                fontSize: 10,
+                letterSpacing: '0.1em',
+                color: '#6b6b6b',
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                textTransform: 'uppercase',
+              }}
+            >
+              {showSources ? 'Hide sources' : 'Show sources'}
+            </button>
           </div>
-
-          <button
-            onClick={() => setShowSources((s) => !s)}
-            className="text-sm underline text-gray-600"
-            style={{ fontFamily: 'var(--font-body)' }}
-          >
-            {showSources ? 'Hide' : 'Show'} sources
-          </button>
-        </div>
-
-        {/* Country filter */}
-        <div className="flex flex-wrap gap-1.5">
-          <button
-            onClick={() => setCountry('')}
-            className="px-2.5 py-1 text-[11px] rounded-full border transition-all"
-            style={{
-              fontFamily: 'var(--font-body)',
-              borderColor: country === '' ? 'var(--action-red)' : '#e5e7eb',
-              color: country === '' ? 'var(--action-red)' : '#4a4f5c',
-              backgroundColor: country === '' ? '#fef2f2' : '#ffffff',
-              fontWeight: country === '' ? 600 : 500,
-            }}
-          >
-            🇪🇺 All EU
-          </button>
-          {COUNTRIES.map((c) => (
-            <button
-              key={c.code}
-              onClick={() => setCountry(c.code)}
-              className="px-2.5 py-1 text-[11px] rounded-full border transition-all"
-              style={{
-                fontFamily: 'var(--font-body)',
-                borderColor: country === c.code ? 'var(--action-red)' : '#e5e7eb',
-                color: country === c.code ? 'var(--action-red)' : '#4a4f5c',
-                backgroundColor: country === c.code ? '#fef2f2' : '#ffffff',
-                fontWeight: country === c.code ? 600 : 500,
-              }}
-              title={c.name}
-            >
-              {c.flag} {c.code}
-            </button>
-          ))}
-        </div>
-
-        {/* Category chips */}
-        <div className="flex flex-wrap gap-2">
-          {CATEGORIES.map((c) => (
-            <button
-              key={c.value}
-              onClick={() => setCategory(c.value)}
-              className="px-3 py-1.5 text-xs rounded-full border transition-all"
-              style={{
-                fontFamily: 'var(--font-body)',
-                borderColor: category === c.value ? 'var(--action-red)' : '#e5e7eb',
-                color: category === c.value ? 'var(--action-red)' : '#4a4f5c',
-                backgroundColor: category === c.value ? '#fef2f2' : '#ffffff',
-                fontWeight: category === c.value ? 600 : 500,
-              }}
-            >
-              {c.label}
-            </button>
-          ))}
         </div>
 
         {/* Trends list */}
@@ -502,31 +547,42 @@ export default function CultureRadarPage() {
             <p className="jai-mono-label" style={{ color: '#FF1300', margin: 0 }}>Loading…</p>
             <p className="jai-serif" style={{ margin: '8px 0 0 0', fontSize: 18 }}>Pulling fresh signals from the culture firehose.</p>
           </div>
-        ) : trends.length === 0 ? (
+        ) : filteredTrends.length === 0 ? (
           <div className="jai-card" style={{ padding: 48, textAlign: 'center', background: '#FAF6E6' }}>
             <p className="jai-mono-label" style={{ color: '#FF1300', margin: 0 }}>Empty state</p>
             <p style={{ fontFamily: 'var(--font-jai-display)', fontSize: 28, margin: '12px 0 8px 0', textTransform: 'uppercase', color: '#000' }}>
-              No trends yet.<span style={{ color: '#FF1300' }}>.</span>
+              {search ? 'No matches.' : 'No trends yet.'}<span style={{ color: '#FF1300' }}>.</span>
             </p>
             <p style={{ fontSize: 14, color: '#6b6b6b', margin: 0 }}>
-              Hit <strong>Refresh from sources</strong> for the first scrape, or <strong>Report trend</strong> to add manually.
+              {search
+                ? <>Try a different search, or <button onClick={() => setSearch('')} style={{ textDecoration: 'underline', background: 'none', border: 'none', cursor: 'pointer', color: '#FF1300', padding: 0 }}>clear it</button>.</>
+                : <>Hit <strong>Refresh from sources</strong> for the first scrape, or <strong>Report trend</strong> to add manually.</>
+              }
             </p>
           </div>
         ) : (() => {
           // ── Bundle trends with shared bundle_key into one primary card ────
-          // Pick the highest-popularity (or best-ranked) trend per bundle as
-          // the primary. Other members become "variants" displayed inside.
-          const bundledTrends = bundleTrends(trends)
+          const bundledTrends = bundleTrends(filteredTrends)
 
-          const showHierarchy = view === 'daily'
+          const showHierarchy = view === 'daily' && !search
           if (!showHierarchy) {
+            // Group by category for visual rhythm on long lists
+            const grouped = groupByCategory(bundledTrends)
             return (
-              <div>{bundledTrends.map((t) => <CompactTrend key={t.id} trend={t} />)}</div>
+              <div>
+                {grouped.map(({ category: cat, items }) => (
+                  <div key={cat} style={{ marginBottom: 24 }}>
+                    <CategoryDivider label={cat} count={items.length} />
+                    {items.map((t) => <CompactTrend key={t.id} trend={t} />)}
+                  </div>
+                ))}
+              </div>
             )
           }
           const hero = bundledTrends.find((t) => t.dailyRank === 1)
           const featured = bundledTrends.filter((t) => t.dailyRank === 2 || t.dailyRank === 3)
           const rest = bundledTrends.filter((t) => (t.dailyRank ?? 999) > 3)
+          const restGrouped = groupByCategory(rest)
           return (
             <>
               {hero && <HeroTrend trend={hero} />}
@@ -535,7 +591,14 @@ export default function CultureRadarPage() {
                   {featured.map((t) => <FeaturedTrend key={t.id} trend={t} />)}
                 </div>
               )}
-              <div>{rest.map((t) => <CompactTrend key={t.id} trend={t} />)}</div>
+              <div>
+                {restGrouped.map(({ category: cat, items }) => (
+                  <div key={cat} style={{ marginBottom: 24 }}>
+                    <CategoryDivider label={cat} count={items.length} />
+                    {items.map((t) => <CompactTrend key={t.id} trend={t} />)}
+                  </div>
+                ))}
+              </div>
             </>
           )
         })()}
@@ -839,6 +902,7 @@ function StatCard({
   value: number | string
   hint?: string
 }) {
+  // Legacy — kept for SourceTable references, not used in new header
   return (
     <div className="bg-white border border-gray-200 rounded-lg px-4 py-3">
       <p
@@ -856,6 +920,113 @@ function StatCard({
       {hint && <p className="text-xs text-gray-400 mt-0.5">{hint}</p>}
     </div>
   )
+}
+
+function HeaderStat({ label, value, hint }: { label: string; value: number | string; hint?: string }) {
+  return (
+    <div>
+      <p
+        style={{
+          margin: 0,
+          fontFamily: 'var(--font-jai-display)',
+          fontSize: 9,
+          letterSpacing: '0.15em',
+          color: '#FFFDF3',
+          opacity: 0.5,
+          textTransform: 'uppercase',
+        }}
+      >
+        {label}
+      </p>
+      <p
+        style={{
+          margin: '2px 0 0 0',
+          fontFamily: 'var(--font-jai-display)',
+          fontSize: 22,
+          letterSpacing: '-0.02em',
+          color: '#FFFDF3',
+          lineHeight: 1,
+        }}
+      >
+        {value}
+        {hint && <span style={{ fontSize: 11, color: '#FF1300', marginLeft: 6, letterSpacing: 0 }}>{hint}</span>}
+      </p>
+    </div>
+  )
+}
+
+const CATEGORY_LABELS: Record<string, string> = {
+  food: 'Food',
+  beauty: 'Beauty',
+  fashion: 'Fashion',
+  home: 'Home',
+  lifestyle: 'Lifestyle',
+  tech: 'Tech',
+  meme: 'Meme',
+  culture: 'Culture',
+  platform: 'Platform',
+  sound: 'Sound',
+  format: 'Format',
+  sport: 'Sport',
+}
+
+function CategoryDivider({ label, count }: { label: string; count: number }) {
+  const friendly = CATEGORY_LABELS[label] ?? label
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        margin: '20px 0 12px 0',
+      }}
+    >
+      <span
+        style={{
+          fontFamily: 'var(--font-jai-display)',
+          fontSize: 22,
+          letterSpacing: '-0.01em',
+          color: '#000',
+          textTransform: 'uppercase',
+          lineHeight: 1,
+        }}
+      >
+        {friendly}<span style={{ color: '#FF1300' }}>.</span>
+      </span>
+      <span
+        style={{
+          fontFamily: 'var(--font-jai-display)',
+          fontSize: 10,
+          letterSpacing: '0.15em',
+          color: '#6b6b6b',
+          textTransform: 'uppercase',
+        }}
+      >
+        {count} {count === 1 ? 'trend' : 'trends'}
+      </span>
+      <div style={{ flex: 1, height: 2, background: '#000' }} />
+    </div>
+  )
+}
+
+function groupByCategory(
+  trends: CultureTrend[],
+): Array<{ category: string; items: CultureTrend[] }> {
+  // Sort categories by the average daily_rank (or weekly_rank) of their members,
+  // so the most relevant categories come first.
+  const map = new Map<string, CultureTrend[]>()
+  for (const t of trends) {
+    const cat = (t.category as string) || 'other'
+    const list = map.get(cat) ?? []
+    list.push(t)
+    map.set(cat, list)
+  }
+  const groups = Array.from(map.entries()).map(([category, items]) => {
+    const bestRank = Math.min(...items.map((i) => i.dailyRank ?? i.weeklyRank ?? 999))
+    return { category, items, bestRank }
+  })
+  groups.sort((a, b) => a.bestRank - b.bestRank)
+  return groups.map(({ category, items }) => ({ category, items }))
 }
 
 function TrendRow({ trend, view }: { trend: CultureTrend; view: View }) {
