@@ -186,6 +186,57 @@ function formatDate(iso: string): string {
   })
 }
 
+// Cinematic full-bleed cover hero: tall image, gradient overlay, headline,
+// kicker, and dek floating bottom-left. Falls back to a category-themed
+// SVG poster when no thumbnail is available.
+function renderCoverHero(t: TrendForReport): string {
+  const color = CATEGORY_COLOR[t.category] ?? '#FF1300'
+  const emoji = CATEGORY_EMOJI[t.category] ?? '🔥'
+  const hasThumb = !!t.thumbnail_url
+
+  // SVG poster: bold typographic placeholder when no real image
+  const svgPoster = !hasThumb
+    ? `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 800 480" preserveAspectRatio="xMidYMid slice" style="display:block;">
+         <defs>
+           <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+             <stop offset="0%" stop-color="${color}" stop-opacity="0.18"/>
+             <stop offset="100%" stop-color="${color}" stop-opacity="0.55"/>
+           </linearGradient>
+         </defs>
+         <rect width="800" height="480" fill="#000"/>
+         <rect width="800" height="480" fill="url(#bg)"/>
+         <g transform="rotate(-12 660 240)">
+           <text x="660" y="280" text-anchor="middle" font-family="Archivo Black,sans-serif" font-size="320" fill="${color}" opacity="0.35">${emoji}</text>
+         </g>
+       </svg>`
+    : ''
+
+  return `
+<tr>
+  <td style="padding:28px 40px 40px;">
+    <table cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#000;border:1px solid #FF1300;">
+      <tr>
+        <td style="position:relative;padding:0;${hasThumb ? `background-image:linear-gradient(180deg,rgba(0,0,0,0.15) 0%,rgba(0,0,0,0.75) 75%,rgba(0,0,0,0.95) 100%),url(${escapeHtml(t.thumbnail_url!)});background-size:cover;background-position:center;` : ''}">
+          <div style="${hasThumb ? 'min-height:420px;' : ''}">
+            ${!hasThumb ? `<div style="position:relative;width:100%;height:420px;overflow:hidden;">${svgPoster}<div style="position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,0.2) 0%,rgba(0,0,0,0.85) 100%);"></div></div>` : ''}
+            <table cellpadding="0" cellspacing="0" border="0" width="100%" style="${hasThumb ? 'position:absolute;bottom:0;left:0;right:0;' : 'margin-top:-280px;position:relative;'}">
+              <tr>
+                <td style="padding:24px 32px 28px;">
+                  <p style="margin:0 0 4px 0;font-family:'Archivo Black',sans-serif;font-size:10px;letter-spacing:0.25em;color:#FF1300;text-transform:uppercase;">★ TODAY'S #1 · ${escapeHtml(t.category).toUpperCase()}</p>
+                  <h2 style="margin:8px 0 0 0;font-family:'Archivo Black',sans-serif;font-size:54px;line-height:0.9;color:#FFFDF3;text-transform:uppercase;letter-spacing:-0.025em;max-width:90%;">${escapeHtml(t.name)}<span style="color:#FF1300;">.</span></h2>
+                  <p style="margin:14px 0 0 0;font-family:'Newsreader',Georgia,serif;font-size:18px;line-height:1.45;color:#FFFDF3;opacity:0.92;font-weight:300;max-width:80%;">${escapeHtml(t.description.slice(0, 260))}${t.description.length > 260 ? '…' : ''}</p>
+                  ${t.estimated_views ? `<p style="margin:14px 0 0 0;font-family:'Archivo Black',sans-serif;font-size:11px;letter-spacing:0.12em;color:#FFFDF3;opacity:0.6;text-transform:uppercase;">📊 ${escapeHtml(t.estimated_views)}${t.hashtags && t.hashtags.length > 0 ? ` · ${escapeHtml(t.hashtags.slice(0, 3).join(' '))}` : ''}</p>` : ''}
+                </td>
+              </tr>
+            </table>
+          </div>
+        </td>
+      </tr>
+    </table>
+  </td>
+</tr>`
+}
+
 function renderTrendCard(t: TrendForReport, opts: { showRank?: boolean } = {}): string {
   const emoji = CATEGORY_EMOJI[t.category] ?? '🔥'
   const color = CATEGORY_COLOR[t.category] ?? '#6b7280'
@@ -200,13 +251,20 @@ function renderTrendCard(t: TrendForReport, opts: { showRank?: boolean } = {}): 
 
   return `
 <tr><td style="padding:0 0 24px 0;">
-  <table cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#ffffff;border-left:4px solid ${color};border-radius:6px;overflow:hidden;border:1px solid #e5e7eb;border-left-color:${color};">
+  <table cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#FFFDF3;border:1px solid #000;border-left:6px solid ${color};overflow:hidden;">
     <tr>
       ${t.thumbnail_url
-        ? `<td width="120" valign="top" style="padding:0;background:#000;">
-            <img src="${escapeHtml(t.thumbnail_url)}" alt="" width="120" style="display:block;width:120px;height:auto;object-fit:cover;border:0;" />
+        ? `<td width="180" valign="top" style="padding:0;background:#000;width:180px;">
+            <img src="${escapeHtml(t.thumbnail_url)}" alt="" width="180" style="display:block;width:180px;height:180px;object-fit:cover;border:0;" />
           </td>`
-        : `<td width="120" valign="middle" style="padding:24px 0;background:${color}15;text-align:center;font-size:48px;line-height:1;">${emoji}</td>`}
+        : `<td width="180" valign="middle" style="padding:0;background:#000;width:180px;height:180px;text-align:center;position:relative;">
+            <table cellpadding="0" cellspacing="0" border="0" width="180" height="180" style="width:180px;height:180px;">
+              <tr><td valign="middle" align="center" style="background-image:linear-gradient(135deg,${color}33 0%,${color}88 100%);width:180px;height:180px;">
+                <div style="font-family:'Archivo Black',sans-serif;font-size:64px;line-height:1;color:#FFFDF3;opacity:0.4;">${emoji}</div>
+                <p style="margin:6px 0 0 0;font-family:'Archivo Black',sans-serif;font-size:9px;letter-spacing:0.18em;color:#FFFDF3;text-transform:uppercase;">${escapeHtml(t.category)}</p>
+              </td></tr>
+            </table>
+          </td>`}
       <td valign="top" style="padding:16px 18px;">
         ${opts.showRank && t.daily_rank ? `<span style="display:inline-block;background:#E3000F;color:#fff;font-weight:700;font-size:12px;padding:2px 8px;border-radius:99px;margin-right:6px;">#${t.daily_rank}</span>` : ''}
         <span style="display:inline-block;background:${color}15;color:${color};font-size:10px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;padding:3px 8px;border-radius:4px;margin-right:6px;">${emoji} ${escapeHtml(t.category)}</span>
@@ -219,16 +277,16 @@ function renderTrendCard(t: TrendForReport, opts: { showRank?: boolean } = {}): 
           <table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top:12px;background:#fafafa;border-radius:4px;">
             <tr>
               <td style="padding:10px 12px;">
-                <p style="margin:0 0 4px 0;font-size:9px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#9ca3af;">Voor Action</p>
-                <p style="margin:0 0 8px 0;font-size:13px;color:#1f2937;line-height:1.5;">${escapeHtml(brief.actionRelevance)}</p>
-                <p style="margin:0 0 4px 0;font-size:9px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#9ca3af;">Content aanpak</p>
+                <p style="margin:0 0 4px 0;font-family:'Archivo Black',sans-serif;font-size:9px;letter-spacing:0.15em;text-transform:uppercase;color:#FF1300;">Waarom voor Action</p>
+                <p style="margin:0 0 10px 0;font-size:13px;color:#1f2937;line-height:1.5;">${escapeHtml(brief.actionRelevance)}</p>
+                <p style="margin:0 0 4px 0;font-family:'Archivo Black',sans-serif;font-size:9px;letter-spacing:0.15em;text-transform:uppercase;color:#000;">Content angle</p>
                 <p style="margin:0 0 6px 0;font-size:12px;color:#374151;line-height:1.5;">${escapeHtml(brief.contentAngle)}</p>
                 ${brief.suggestedSound ? `<p style="margin:0;font-size:11px;color:#6b7280;">♪ <strong>${brief.soundRisk === 'safe' ? '✓' : brief.soundRisk === 'risky' ? '⚠' : '?'}</strong> ${escapeHtml(brief.suggestedSound)}</p>` : ''}
                 ${brief.productCategories && brief.productCategories.length > 0 ? `
                 <p style="margin:8px 0 0 0;font-size:11px;">
                   ${brief.productCategories.map((c) => `<span style="display:inline-block;background:#fef2f2;color:#E3000F;border:1px solid #fecaca;padding:2px 8px;border-radius:99px;font-size:10px;font-weight:600;margin-right:4px;">${escapeHtml(c)}</span>`).join('')}
                 </p>` : ''}
-                <p style="margin:6px 0 0 0;font-size:10px;color:#9ca3af;">⏱️ urgency ${brief.urgency}/10 · ${escapeHtml(brief.lifecycleStage)}</p>
+                <p style="margin:6px 0 0 0;font-size:10px;color:#9ca3af;">⏱️ urgentie ${brief.urgency}/10 · ${escapeHtml(brief.lifecycleStage)}</p>
               </td>
             </tr>
           </table>
@@ -285,7 +343,7 @@ function renderCreatorCard(c: CreatorForReport): string {
           </tr>
         </table>
         ${c.niche ? `<p style="margin:6px 0 0 0;font-family:'Inter',sans-serif;font-size:12px;color:#000;line-height:1.4;">${escapeHtml(c.niche)}</p>` : ''}
-        ${c.why_relevant ? `<p style="margin:6px 0 0 0;font-family:'Inter',sans-serif;font-size:11px;color:#000;line-height:1.4;background:#FFFDF3;border-left:2px solid #FF1300;padding:4px 8px;"><strong style="color:#FF1300;">WHY:</strong> ${escapeHtml(c.why_relevant)}</p>` : ''}
+        ${c.why_relevant ? `<p style="margin:6px 0 0 0;font-family:'Inter',sans-serif;font-size:11px;color:#000;line-height:1.4;background:#FFFDF3;border-left:2px solid #FF1300;padding:4px 8px;"><strong style="color:#FF1300;">WAAROM:</strong> ${escapeHtml(c.why_relevant)}</p>` : ''}
         ${(c.country_relevance && c.country_relevance.length > 0) || (c.tags && c.tags.length > 0) ? `
           <p style="margin:6px 0 0 0;font-family:'Inter',sans-serif;font-size:10px;color:#000;">
             ${(c.country_relevance ?? []).slice(0, 3).map((cc) => `<span style="display:inline-block;background:#000;color:#FFFDF3;padding:1px 6px;margin-right:3px;font-family:'Archivo Black',sans-serif;font-size:9px;">${escapeHtml(cc)}</span>`).join('')}
@@ -312,7 +370,7 @@ function renderMomentRow(m: MomentForReport): string {
     <div style="background:#E3000F;color:#fff;border-radius:6px;padding:6px 4px;">
       <div style="font-size:18px;font-weight:700;line-height:1;">${date ? date.getDate() : '?'}</div>
       <div style="font-size:10px;text-transform:uppercase;margin-top:2px;">${date ? date.toLocaleDateString('en-GB', { month: 'short' }) : ''}</div>
-      <div style="font-size:9px;margin-top:2px;opacity:0.85;">in ${daysUntil}d</div>
+      <div style="font-size:9px;margin-top:2px;opacity:0.85;">over ${daysUntil}d</div>
     </div>
   </td>
   <td valign="top" style="padding:10px 0 10px 12px;border-bottom:1px solid #f0f0f0;">
@@ -387,21 +445,7 @@ export function renderReportHtml(data: ReportData): string {
                   </table>
                 </td>
               </tr>
-              ${data.dailyTop10[0] ? `
-              <!-- Hero trend feature on cover -->
-              <tr>
-                <td style="padding:28px 40px 40px;">
-                  <table cellpadding="0" cellspacing="0" border="0" width="100%" style="background:${data.dailyTop10[0].thumbnail_url ? '#000' : '#FFE3CC'};">
-                    <tr>
-                      <td style="padding:24px;${data.dailyTop10[0].thumbnail_url ? `background-image:linear-gradient(rgba(0,0,0,0.55),rgba(0,0,0,0.85)),url(${escapeHtml(data.dailyTop10[0].thumbnail_url)});background-size:cover;background-position:center;` : ''}">
-                        <p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:10px;letter-spacing:0.2em;color:#FF1300;">★ TODAY'S #1</p>
-                        <h2 style="margin:10px 0 6px 0;font-family:'Archivo Black',sans-serif;font-size:42px;line-height:0.92;color:${data.dailyTop10[0].thumbnail_url ? '#FFFDF3' : '#000'};text-transform:uppercase;letter-spacing:-0.02em;">${escapeHtml(data.dailyTop10[0].name)}</h2>
-                        <p style="margin:8px 0 0 0;font-family:'Newsreader',Georgia,serif;font-size:16px;line-height:1.45;color:${data.dailyTop10[0].thumbnail_url ? '#FFFDF3' : '#000'};opacity:0.92;">${escapeHtml(data.dailyTop10[0].description.slice(0, 240))}${data.dailyTop10[0].description.length > 240 ? '…' : ''}</p>
-                      </td>
-                    </tr>
-                  </table>
-                </td>
-              </tr>` : ''}
+              ${data.dailyTop10[0] ? renderCoverHero(data.dailyTop10[0]) : ''}
             </table>
           </td>
         </tr>
@@ -419,10 +463,10 @@ export function renderReportHtml(data: ReportData): string {
                 </td>
                 <td valign="top" style="padding-left:24px;border-left:2px solid #000;">
                   <p style="margin:0;font-family:'Newsreader',Georgia,serif;font-size:18px;line-height:1.55;color:#000;font-weight:400;">
-                    Deze week ${data.dailyTop10.length} trends die NU op de wereld vallen, ${data.inspiration.length} formats om uit te kopiëren, ${data.emerging.length} signalen die nog klein maar snel stijgen, ${data.creators.length} creators die het waard zijn om te volgen, en ${data.upcomingMoments.length} moments die in de komende 3 weken vallen.
+                    Vandaag staan er <strong>${data.dailyTop10.length} trends</strong> bovenaan, <strong>${data.inspiration.length} formats</strong> om direct over te nemen, <strong>${data.emerging.length} signalen</strong> die nog klein zijn maar snel stijgen, <strong>${data.creators.length} creators</strong> om te volgen, en <strong>${data.upcomingMoments.length} moments</strong> die in de komende drie weken vallen.
                   </p>
                   <p style="margin:12px 0 0 0;font-family:'Inter',sans-serif;font-size:12px;color:#6b6b6b;">
-                    Klik op een trend om de bron-video te openen. Sounds met <strong style="color:#FF1300;">✓ SAFE</strong> zijn cleared voor Action's TikTok Business Account.
+                    Klik op een trend om de bron te openen. Sounds met <strong style="color:#FF1300;">✓ SAFE</strong> zijn rechtenvrij te gebruiken op Action's TikTok Business Account.
                   </p>
                 </td>
               </tr>
@@ -441,7 +485,7 @@ export function renderReportHtml(data: ReportData): string {
               </tr>
             </table>
             <h2 style="margin:14px 0 4px 0;font-family:'Archivo Black',sans-serif;font-size:32px;line-height:1.05;color:#000;text-transform:uppercase;letter-spacing:-0.02em;">🔥 What's hot<br/><span style="color:#FF1300;">right now.</span></h2>
-            <p style="margin:8px 0 18px 0;font-family:'Inter',sans-serif;font-size:13px;color:#000;opacity:0.7;">The trends Action's team needs to know about today.</p>
+            <p style="margin:8px 0 18px 0;font-family:'Inter',sans-serif;font-size:13px;color:#000;opacity:0.7;">De trends die Action's team vandaag moet kennen.</p>
           </td>
         </tr>
         <tr><td style="padding:0 40px;">
@@ -463,7 +507,7 @@ export function renderReportHtml(data: ReportData): string {
               </tr>
             </table>
             <h2 style="margin:14px 0 4px 0;font-family:'Archivo Black',sans-serif;font-size:32px;line-height:1.05;color:#000;text-transform:uppercase;letter-spacing:-0.02em;">💡 Steal these<br/><span style="color:#FF1300;">formats.</span></h2>
-            <p style="margin:8px 0 18px 0;font-family:'Inter',sans-serif;font-size:13px;color:#000;opacity:0.7;">Ways to MAKE content — editing tricks, visual signatures, format templates.</p>
+            <p style="margin:8px 0 18px 0;font-family:'Inter',sans-serif;font-size:13px;color:#000;opacity:0.7;">Manieren om content te MAKEN: edit-tricks, visuele signaturen, format-templates.</p>
           </td>
         </tr>
         <tr><td style="padding:0 40px;background:#FFFDF3;">
@@ -485,7 +529,7 @@ export function renderReportHtml(data: ReportData): string {
               </tr>
             </table>
             <h2 style="margin:14px 0 4px 0;font-family:'Archivo Black',sans-serif;font-size:32px;line-height:1.05;color:#000;text-transform:uppercase;letter-spacing:-0.02em;">✨ Get in<br/><span style="color:#FF1300;">early.</span></h2>
-            <p style="margin:8px 0 18px 0;font-family:'Inter',sans-serif;font-size:13px;color:#000;opacity:0.7;">Small but rising — claim the trend before it's mainstream.</p>
+            <p style="margin:8px 0 18px 0;font-family:'Inter',sans-serif;font-size:13px;color:#000;opacity:0.7;">Klein maar stijgend: claim de trend voor hij mainstream wordt.</p>
           </td>
         </tr>
         <tr><td style="padding:0 40px;background:#FFFDF3;">
@@ -507,7 +551,7 @@ export function renderReportHtml(data: ReportData): string {
               </tr>
             </table>
             <h2 style="margin:14px 0 4px 0;font-family:'Archivo Black',sans-serif;font-size:32px;line-height:1.05;color:#000;text-transform:uppercase;letter-spacing:-0.02em;">📺 New creators<br/><span style="color:#FF1300;">to watch.</span></h2>
-            <p style="margin:8px 0 18px 0;font-family:'Inter',sans-serif;font-size:13px;color:#000;opacity:0.7;">Niche creators rotated daily by a different lens — fresh ${data.creators.length} every morning.</p>
+            <p style="margin:8px 0 18px 0;font-family:'Inter',sans-serif;font-size:13px;color:#000;opacity:0.7;">Niche creators, elke dag gerouleerd vanuit een andere invalshoek. Vandaag ${data.creators.length} nieuwe namen.</p>
           </td>
         </tr>
         <tr><td style="padding:0 40px;background:#FFFDF3;">
@@ -540,7 +584,7 @@ export function renderReportHtml(data: ReportData): string {
               </tr>
             </table>
             <h2 style="margin:14px 0 4px 0;font-family:'Archivo Black',sans-serif;font-size:32px;line-height:1.05;color:#000;text-transform:uppercase;letter-spacing:-0.02em;">📅 Coming<br/><span style="color:#FF1300;">next 3 weeks.</span></h2>
-            <p style="margin:8px 0 18px 0;font-family:'Inter',sans-serif;font-size:13px;color:#000;opacity:0.7;">Plan campaigns and content around these.</p>
+            <p style="margin:8px 0 18px 0;font-family:'Inter',sans-serif;font-size:13px;color:#000;opacity:0.7;">Bouw campagnes en content rond deze momenten.</p>
           </td>
         </tr>
         <tr><td style="padding:0 40px 40px;background:#FFFDF3;">
@@ -553,7 +597,7 @@ export function renderReportHtml(data: ReportData): string {
         <tr>
           <td style="padding:40px 40px;background:#000000;text-align:center;">
             <p style="margin:0 0 12px 0;font-family:'Archivo Black',sans-serif;font-size:32px;line-height:0.95;letter-spacing:-0.02em;color:#FFFDF3;text-transform:uppercase;">Jack<span style="color:#FF1300;">&amp;</span>A<span style="color:#FF1300;">!</span></p>
-            <p style="margin:0 0 4px 0;font-family:'Inter',sans-serif;font-size:11px;color:#FFFDF3;opacity:0.5;">Generated ${new Date(data.generatedAt).toLocaleString('nl-NL')} · Daily briefing from your AI agency</p>
+            <p style="margin:0 0 4px 0;font-family:'Inter',sans-serif;font-size:11px;color:#FFFDF3;opacity:0.5;">Samengesteld op ${new Date(data.generatedAt).toLocaleString('nl-NL')} · Dagelijkse briefing van je AI agency</p>
             <p style="margin:12px 0 0 0;font-family:'Inter',sans-serif;font-size:12px;">
               <a href="https://action-culture-radar.vercel.app/culture-radar" style="color:#FF1300;text-decoration:none;font-weight:700;">→ Live dashboard</a>
               <span style="color:#FFFDF3;opacity:0.3;">&nbsp;·&nbsp;</span>
