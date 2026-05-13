@@ -139,7 +139,7 @@ export async function listSources(args: ListSourcesArgs = {}): Promise<SourceRow
             active, notes, last_scraped_at, last_scrape_status, last_scrape_error
        FROM culture_sources
        ${where}
-       ORDER BY category ASC, reliability DESC`,
+       ORDER BY last_scraped_at ASC NULLS FIRST, reliability DESC`,
     params,
   )) as SourceRowDB[]
   return rows

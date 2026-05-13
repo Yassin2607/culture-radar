@@ -70,7 +70,7 @@ export const maxDuration = 300
 
 const firecrawl = new FirecrawlApp({ apiKey: process.env.FIRECRAWL_API_KEY ?? '' })
 
-const SCRAPE_CONCURRENCY = 4
+const SCRAPE_CONCURRENCY = 8
 const AI_CONCURRENCY = 4
 const MAX_TRENDS_PER_SOURCE = 8
 
