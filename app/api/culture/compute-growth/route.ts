@@ -33,10 +33,12 @@ export async function POST(req: NextRequest) {
   try { body = await req.json().catch(() => ({})) } catch { /* */ }
   const week = body.week ?? isoWeek()
 
-  // Ensure column exists
-  await sql().query(
-    `ALTER TABLE culture_trends ADD COLUMN IF NOT EXISTS growth_score NUMERIC(3,1)`,
-  )
+  // Ensure all columns this endpoint reads/writes exist. Order matters
+  // only the first time the endpoint is called on a fresh DB — after
+  // that everything is idempotent.
+  await sql().query(`ALTER TABLE culture_trends ADD COLUMN IF NOT EXISTS growth_score NUMERIC(3,1)`)
+  await sql().query(`ALTER TABLE culture_trends ADD COLUMN IF NOT EXISTS subculture TEXT`)
+  await sql().query(`ALTER TABLE culture_trends ADD COLUMN IF NOT EXISTS vibe TEXT`)
 
   const rows = (await sql().query(
     `SELECT id, freshness_score, validation_score, popularity_score,
