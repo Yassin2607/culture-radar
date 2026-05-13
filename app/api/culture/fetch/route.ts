@@ -86,7 +86,7 @@ interface FetchBody {
   lookbackDays?: number
 }
 
-interface SourceRow {
+export interface SourceRow {
   id: number
   name: string
   url: string
@@ -299,7 +299,7 @@ export async function POST(req: Request) {
 // Scraping helpers
 // ───────────────────────────────────────────────────────────────────────────
 
-async function scrapeSource(source: SourceRow, lookbackDays: number): Promise<ScrapeResult> {
+export async function scrapeSource(source: SourceRow, lookbackDays: number): Promise<ScrapeResult> {
   // Dispatch on source_type:
   //   - google_trends_api      → direct API call, no Firecrawl
   //   - perplexity_query       → ask Perplexity, use answer + citations as content
@@ -494,7 +494,7 @@ function extractCountryFromName(name: string): string {
  * format. Skips the Gemini extraction step — the data is already structured
  * and the numbers are real.
  */
-function convertCCHashtagsToTrends(
+export function convertCCHashtagsToTrends(
   hashtags: CreativeCenterHashtag[],
   sourceCategory: string,
 ): AIIdentifiedTrend[] {
@@ -636,7 +636,7 @@ function extractLinks(markdown: string): string[] {
 // Trend upsert
 // ───────────────────────────────────────────────────────────────────────────
 
-async function upsertTrend(
+export async function upsertTrend(
   m: MergedTrend,
   week: string,
   now: Date,
@@ -702,7 +702,7 @@ async function upsertTrend(
  * Done in app code rather than SQL so we can iterate on the scoring formula
  * without migrations.
  */
-async function recomputeRanks(week: string, today: string): Promise<void> {
+export async function recomputeRanks(week: string, today: string): Promise<void> {
   const rows = await loadActiveTrendsForRanking(week)
   const ranked = rows
     .map((t) => ({

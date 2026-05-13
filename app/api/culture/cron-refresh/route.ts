@@ -17,7 +17,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { POST as fetchHandler } from '@/app/api/culture/fetch/route'
+// fetchHandler import removed — cron now uses HTTP fetch to /scrape + /extract
+// so each stage gets its own 300s budget instead of sharing cron's.
 import { POST as backfillBriefsHandler } from '@/app/api/culture/backfill-briefs/route'
 import { POST as verifyUrlsHandler } from '@/app/api/culture/verify-urls/route'
 import { POST as scanCreatorsHandler } from '@/app/api/culture/scan-creators/route'
@@ -130,27 +131,60 @@ export async function GET(req: NextRequest) {
     /* best-effort */
   }
 
-  // ── Step 1: fetch (scrape + AI + rank + archive) ───────────────────────
+  // ── Step 1a: SCRAPE (separate function invocation, own 300s budget) ───
+  // Use external HTTP fetch so the scrape and extract stages each get
+  // their own 300s Vercel function budget — they don't share cron's.
+  const origin = req.nextUrl.origin
   let fetchSummary: unknown = null
   let fetchError: string | null = null
+  let scrapeOk = 0
+  let scrapeFailed = 0
   try {
-    const fetchReq = new NextRequest(new URL('http://internal/api/culture/fetch'), {
+    const scrapeRes = await fetch(`${origin}/api/culture/scrape`, {
       method: 'POST',
-      headers: {
-        authorization: expectedBearer,
-        'content-type': 'application/json',
-      },
+      headers: { authorization: expectedBearer, 'content-type': 'application/json' },
       body: JSON.stringify({ triggeredBy: 'cron-daily-7am' }),
     })
-    const res = await fetchHandler(fetchReq)
-    const data = (await res.json()) as { summary?: unknown; error?: string }
-    if (!res.ok) {
-      fetchError = data.error ?? `HTTP ${res.status}`
-    } else {
-      fetchSummary = data.summary
+    const d = (await scrapeRes.json()) as { okCount?: number; failedCount?: number; error?: string }
+    if (!scrapeRes.ok) fetchError = d.error ?? `scrape HTTP ${scrapeRes.status}`
+    else {
+      scrapeOk = d.okCount ?? 0
+      scrapeFailed = d.failedCount ?? 0
     }
   } catch (err) {
     fetchError = err instanceof Error ? err.message : String(err)
+  }
+
+  // ── Step 1b: EXTRACT (drain queue, can be called multiple times) ──────
+  // One call here per cron run. If the queue isn't fully drained, the
+  // next day's cron picks it up. In practice queue drains in 1 call when
+  // scrape was healthy.
+  let extractInserted = 0
+  let extractUpdated = 0
+  let extractRemaining = 0
+  if (!fetchError) {
+    try {
+      const extractRes = await fetch(`${origin}/api/culture/extract`, {
+        method: 'POST',
+        headers: { authorization: expectedBearer, 'content-type': 'application/json' },
+        body: JSON.stringify({ limit: 120, rerank: true }),
+      })
+      const d = (await extractRes.json()) as {
+        inserted?: number; updated?: number; queueRemaining?: number; error?: string
+      }
+      if (extractRes.ok) {
+        extractInserted = d.inserted ?? 0
+        extractUpdated = d.updated ?? 0
+        extractRemaining = d.queueRemaining ?? 0
+      }
+    } catch (err) {
+      console.error('[cron] extract failed', err)
+    }
+  }
+
+  fetchSummary = {
+    scrape: { ok: scrapeOk, failed: scrapeFailed },
+    extract: { inserted: extractInserted, updated: extractUpdated, queueRemaining: extractRemaining },
   }
 
   // ── Step 2: brief backfill (best-effort, capped at one batch of 15) ───
