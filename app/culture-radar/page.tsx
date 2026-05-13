@@ -685,6 +685,7 @@ export default function CultureRadarPage() {
           const showPulse = !country && !search && !vibe && !subculture && minGrowth === 0
           return (
             <div>
+              {showPulse && <GoogleTrendsPulse />}
               {showPulse && <CountryPulse trends={bundledTrends} />}
               {showPulse && <BreakoutPulse trends={bundledTrends} />}
               {grouped.map(({ category: cat, items }) => (
@@ -1062,6 +1063,137 @@ const CATEGORY_LABELS: Record<string, string> = {
   sound: 'Sound',
   format: 'Format',
   sport: 'Sport',
+}
+
+// ── Google Trends pulse: live multi-country + new-today + rising-fast ─────
+
+interface GtPulseData {
+  snapshotDate?: string
+  empty?: boolean
+  multiCountry: Array<{
+    title: string
+    countryCount: number
+    avgRank: number
+    geos: Array<{ geo: string; rank: number }>
+    relatedQueries: string[]
+    articles: Array<{ title: string; url: string; source: string | null }>
+  }>
+  newToday: Array<{ title: string; geo: string; rank: number; articles: Array<{ title: string; url: string; source: string | null }> | null }>
+  risingFast: Array<{ title: string; geo: string; rankToday: number; rankYesterday: number; delta: number }>
+  topByCountry: Array<{ geo: string; items: Array<{ rank: number; title: string; traffic: string | null }> }>
+}
+
+function GoogleTrendsPulse() {
+  const [data, setData] = useState<GtPulseData | null>(null)
+  const [loaded, setLoaded] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    apiFetch('/api/culture/gt-pulse')
+      .then((r) => r.json())
+      .then((d: GtPulseData) => {
+        if (!cancelled) {
+          setData(d)
+          setLoaded(true)
+        }
+      })
+      .catch(() => { if (!cancelled) setLoaded(true) })
+    return () => { cancelled = true }
+  }, [])
+
+  if (!loaded) return null
+  if (!data || data.empty) return null
+  if (data.multiCountry.length === 0 && data.newToday.length === 0 && data.risingFast.length === 0) return null
+
+  const flag = (g: string) => {
+    const m: Record<string, string> = { NL: '🇳🇱', BE: '🇧🇪', FR: '🇫🇷', DE: '🇩🇪', AT: '🇦🇹', CH: '🇨🇭', ES: '🇪🇸', IT: '🇮🇹', PT: '🇵🇹', PL: '🇵🇱', CZ: '🇨🇿', SK: '🇸🇰', HU: '🇭🇺', RO: '🇷🇴' }
+    return m[g] ?? g
+  }
+
+  return (
+    <div style={{ marginBottom: 28 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '20px 0 12px 0' }}>
+        <span style={{ fontFamily: 'var(--font-jai-display)', fontSize: 22, letterSpacing: '-0.01em', color: '#000', textTransform: 'uppercase', lineHeight: 1 }}>
+          Live Google Trends<span style={{ color: '#FF1300' }}>.</span>
+        </span>
+        <span style={{ fontFamily: 'var(--font-jai-display)', fontSize: 10, letterSpacing: '0.15em', color: '#6b6b6b', textTransform: 'uppercase' }}>
+          Cross-country search pulse · last 24h
+        </span>
+        <div style={{ flex: 1, height: 2, background: '#000' }} />
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 12 }}>
+        {/* Multi-country panel */}
+        {data.multiCountry.length > 0 && (
+          <div className="jai-card" style={{ padding: 14, background: '#000', color: '#FFFDF3', border: '1px solid #FF1300' }}>
+            <p className="jai-mono-label" style={{ margin: 0, fontSize: 10, color: '#FF1300' }}>
+              🌐 MULTI-COUNTRY · {data.multiCountry.length} TRENDS
+            </p>
+            <p style={{ margin: '4px 0 10px 0', fontSize: 11, opacity: 0.6 }}>
+              Searches trending in 3+ Action markets right now
+            </p>
+            <ol style={{ margin: 0, padding: '0 0 0 18px' }}>
+              {data.multiCountry.slice(0, 8).map((m, i) => (
+                <li key={i} style={{ marginBottom: 8, fontSize: 13, lineHeight: 1.35 }}>
+                  <strong>{m.title}</strong>
+                  <span style={{ marginLeft: 6, fontFamily: 'var(--font-jai-display)', fontSize: 9, letterSpacing: '0.1em', color: '#FF1300' }}>
+                    {m.countryCount}×
+                  </span>
+                  <div style={{ marginTop: 2, fontSize: 10, color: '#FFFDF3', opacity: 0.5, letterSpacing: '0.05em' }}>
+                    {m.geos.slice(0, 8).map((g) => flag(g.geo)).join(' ')}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
+
+        {/* New today panel */}
+        {data.newToday.length > 0 && (
+          <div className="jai-card" style={{ padding: 14, background: '#FFFDF3', border: '1px solid #000' }}>
+            <p className="jai-mono-label" style={{ margin: 0, fontSize: 10, color: '#FF1300' }}>
+              ✨ NEW TODAY · {data.newToday.length} signals
+            </p>
+            <p style={{ margin: '4px 0 10px 0', fontSize: 11, color: '#6b6b6b' }}>
+              In today's top, not in yesterday's. Earliest catch.
+            </p>
+            <ol style={{ margin: 0, padding: '0 0 0 18px' }}>
+              {data.newToday.slice(0, 10).map((n, i) => (
+                <li key={i} style={{ marginBottom: 6, fontSize: 12, lineHeight: 1.35, color: '#1a1a1a' }}>
+                  <span style={{ marginRight: 4 }}>{flag(n.geo)}</span>
+                  <strong>{n.title}</strong>
+                  <span style={{ marginLeft: 6, fontSize: 10, color: '#6b6b6b' }}>#{n.rank}</span>
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
+
+        {/* Rising fast panel */}
+        {data.risingFast.length > 0 && (
+          <div className="jai-card" style={{ padding: 14, background: '#FFE4E0', border: '1px solid #FF1300' }}>
+            <p className="jai-mono-label" style={{ margin: 0, fontSize: 10, color: '#FF1300' }}>
+              ↗ RISING FAST · {data.risingFast.length}
+            </p>
+            <p style={{ margin: '4px 0 10px 0', fontSize: 11, color: '#6b6b6b' }}>
+              Climbed 5+ ranks vs yesterday
+            </p>
+            <ol style={{ margin: 0, padding: '0 0 0 18px' }}>
+              {data.risingFast.slice(0, 10).map((r, i) => (
+                <li key={i} style={{ marginBottom: 6, fontSize: 12, lineHeight: 1.35, color: '#1a1a1a' }}>
+                  <span style={{ marginRight: 4 }}>{flag(r.geo)}</span>
+                  <strong>{r.title}</strong>
+                  <span style={{ marginLeft: 6, fontSize: 10, color: '#FF1300', fontFamily: 'var(--font-jai-display)', letterSpacing: '0.08em' }}>
+                    #{r.rankYesterday}→#{r.rankToday}
+                  </span>
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
+      </div>
+    </div>
+  )
 }
 
 // ── Country pulse: top 3 trends per major Action market ────────────────────

@@ -28,6 +28,7 @@ import { POST as enrichVibesHandler } from '@/app/api/culture/enrich-vibes/route
 import { POST as enrichSubculturesHandler } from '@/app/api/culture/enrich-subcultures/route'
 import { POST as computeGrowthHandler } from '@/app/api/culture/compute-growth/route'
 import { POST as snapshotHandler } from '@/app/api/culture/snapshot-trends/route'
+import { POST as snapshotGtHandler } from '@/app/api/culture/snapshot-gt/route'
 import { POST as momentsFetchHandler } from '@/app/api/moments/fetch/route'
 import { refreshMomentStatuses } from '@/lib/moments-db'
 import { POST as momentsBriefsHandler } from '@/app/api/moments/backfill-briefs/route'
@@ -295,6 +296,21 @@ export async function GET(req: NextRequest) {
     } catch { /* best-effort */ }
   }
 
+  // ── Step 2c7: Google Trends snapshot for all 14 countries ────────────
+  let gtItemsSnapped = 0
+  if (!fetchError) {
+    try {
+      const gtReq = new NextRequest(new URL('http://internal/api/culture/snapshot-gt'), {
+        method: 'POST',
+        headers: { authorization: expectedBearer, 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      const r = await snapshotGtHandler(gtReq)
+      const d = (await r.json()) as { inserted?: number }
+      gtItemsSnapped = d.inserted ?? 0
+    } catch { /* best-effort */ }
+  }
+
   // ── Step 2d: Mindmap enrichment (Context & connections per trend) ─────
   // One batch of 12 trends per cron run, ranked by daily_rank. The top
   // hero/featured trends get a mindmap within one day of going active.
@@ -360,6 +376,7 @@ export async function GET(req: NextRequest) {
     subculturesTagged,
     growthScored,
     snapshotsInserted,
+    gtItemsSnapped,
     isMonthStart,
     momentsError,
     momentsSummary,
