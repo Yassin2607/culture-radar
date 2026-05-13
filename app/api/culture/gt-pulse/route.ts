@@ -49,9 +49,12 @@ export async function GET(_req: NextRequest) {
       ORDER BY geo, snapshot_date DESC, rank ASC`,
   )) as SnapshotRow[]
 
-  const todayStr = new Date().toISOString().slice(0, 10)
-  const today = rows.filter((r) => r.snapshot_date === todayStr)
-  const yesterday = rows.filter((r) => r.snapshot_date !== todayStr)
+  // Use the dataset's own most-recent date rather than JS' UTC "today" —
+  // dodges timezone mismatches between Vercel runtime and Neon Postgres.
+  const allDates = Array.from(new Set(rows.map((r) => r.snapshot_date))).sort().reverse()
+  const todayStr = allDates[0]
+  const today = todayStr ? rows.filter((r) => r.snapshot_date === todayStr) : []
+  const yesterday = todayStr ? rows.filter((r) => r.snapshot_date !== todayStr) : []
 
   if (today.length === 0) {
     return NextResponse.json({
@@ -127,7 +130,8 @@ export async function GET(_req: NextRequest) {
   const cached = (await sql().query(
     `SELECT title_normalized, why_now, category, action_relevance, action_angle
        FROM culture_gt_interpretations
-      WHERE snapshot_date = CURRENT_DATE`,
+      WHERE snapshot_date = $1`,
+    [todayStr],
   )) as Array<{ title_normalized: string; why_now: string | null; category: string | null; action_relevance: string | null; action_angle: string | null }>
   const cacheMap = new Map(cached.map((c) => [c.title_normalized, c]))
 
@@ -145,13 +149,13 @@ export async function GET(_req: NextRequest) {
       await sql().query(
         `INSERT INTO culture_gt_interpretations
            (snapshot_date, title_normalized, title, why_now, category, action_relevance, action_angle)
-         VALUES (CURRENT_DATE, $1, $2, $3, $4, $5, $6)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          ON CONFLICT (snapshot_date, title_normalized) DO UPDATE SET
            why_now = EXCLUDED.why_now,
            category = EXCLUDED.category,
            action_relevance = EXCLUDED.action_relevance,
            action_angle = EXCLUDED.action_angle`,
-        [key, f.title, f.whyNow, f.category, f.actionRelevance, f.actionAngle],
+        [todayStr, key, f.title, f.whyNow, f.category, f.actionRelevance, f.actionAngle],
       )
       cacheMap.set(key, {
         title_normalized: key,
@@ -225,7 +229,7 @@ export async function GET(_req: NextRequest) {
 
   return NextResponse.json({
     ok: true,
-    snapshotDate: todayStr,
+    snapshotDate: todayStr ?? null,
     multiCountry: multiCountry.slice(0, 30),
     newToday: newToday.slice(0, 30),
     risingFast: risingFast.slice(0, 20),
