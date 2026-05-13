@@ -43,6 +43,19 @@ interface CrossPlatformResp {
   newsletterOnly: Array<{ id: string; slug: string; name: string; firstSeenAt: string }>
 }
 
+interface AnomalySpike {
+  trendId: string; slug: string; name: string
+  kind: 'spike' | 'freshman'
+  current: number; baseline: number | null; delta: number | null; snapshots: number
+  vibe: string | null; subculture: string | null; growth: number | null
+}
+
+interface Recommendation {
+  id: string; slug: string; name: string; description: string
+  similarity: number; score: number
+  growth: number | null; vibe: string | null; subculture: string | null
+}
+
 interface ReverseDiscoverMatch {
   id: string; slug: string; name: string; description: string
   category: string; popularity: number; growth: number | null
@@ -56,6 +69,10 @@ export default function InsightsPage() {
   const [subcultures, setSubcultures] = useState<SubcultureTraj[]>([])
   const [sources, setSources] = useState<SourceHealth[]>([])
   const [crossPlatform, setCrossPlatform] = useState<CrossPlatformResp | null>(null)
+  const [anomalies, setAnomalies] = useState<AnomalySpike[]>([])
+  const [recommendations, setRecommendations] = useState<Recommendation[]>([])
+  const [recoSeeds, setRecoSeeds] = useState<string[]>([])
+  const [recoLikedCount, setRecoLikedCount] = useState(0)
   const [loading, setLoading] = useState(true)
 
   // Reverse discovery state
@@ -69,11 +86,17 @@ export default function InsightsPage() {
       apiFetch('/api/culture/subculture-trajectory').then((r) => r.json()),
       apiFetch('/api/culture/source-health').then((r) => r.json()),
       apiFetch('/api/culture/cross-platform-velocity').then((r) => r.json()),
-    ]).then(([c, s, src, cp]) => {
+      apiFetch('/api/culture/anomalies').then((r) => r.json()),
+      apiFetch('/api/culture/recommend').then((r) => r.json()),
+    ]).then(([c, s, src, cp, an, rec]) => {
       setClusters(c)
       setSubcultures(s.subcultures ?? [])
       setSources(src.sources ?? [])
       setCrossPlatform(cp)
+      setAnomalies(an.spikes ?? [])
+      setRecommendations(rec.recommendations ?? [])
+      setRecoSeeds(rec.seedExamples ?? [])
+      setRecoLikedCount(rec.likedCount ?? 0)
       setLoading(false)
     }).catch((e) => {
       console.error(e); setLoading(false)
@@ -116,6 +139,81 @@ export default function InsightsPage() {
           <p className="jai-mono-label" style={{ color: '#FF1300' }}>Loading insights…</p>
         ) : (
           <>
+            {/* Anomalies: sudden spikes */}
+            {anomalies.length > 0 && (
+              <Section title="Sudden spikes" subtitle="Trends whose popularity just jumped vs their 3-day baseline. 'Something popped overnight' early-warning.">
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 10 }}>
+                  {anomalies.slice(0, 12).map((a) => (
+                    <a key={a.trendId} href={`/culture-radar/trends/${a.slug}`} style={{ textDecoration: 'none' }}>
+                      <div className="jai-card" style={{ padding: 12, background: a.kind === 'spike' ? '#000' : '#FFE4E0', color: a.kind === 'spike' ? '#FFFDF3' : '#000', border: '1px solid #FF1300', cursor: 'pointer' }}>
+                        <p className="jai-mono-label" style={{ margin: 0, fontSize: 10, color: '#FF1300' }}>
+                          {a.kind === 'spike' ? `↑ SPIKE · +${a.delta ?? 0}` : '✨ FRESHMAN'}
+                        </p>
+                        <p style={{ margin: '4px 0 6px', fontFamily: 'var(--font-jai-display)', fontSize: 14, textTransform: 'uppercase', letterSpacing: '-0.01em', lineHeight: 1.15 }}>
+                          {a.name}
+                        </p>
+                        <p style={{ margin: 0, fontSize: 11, opacity: 0.7 }}>
+                          {a.kind === 'spike'
+                            ? `now ${a.current}, baseline ${a.baseline?.toFixed(1)} (${a.snapshots} snapshots)`
+                            : `popularity ${a.current}, brand new`}
+                        </p>
+                        {(a.subculture || a.vibe) && (
+                          <p style={{ margin: '4px 0 0', fontSize: 10, opacity: 0.6 }}>
+                            {a.subculture && <>◇ {a.subculture} · </>}
+                            {a.vibe}
+                          </p>
+                        )}
+                      </div>
+                    </a>
+                  ))}
+                </div>
+              </Section>
+            )}
+
+            {/* Recommendations based on team feedback */}
+            <Section title="Recommendations" subtitle={recoLikedCount === 0
+              ? `Mark trends as 👍 useful in the dashboard. Then this engine surfaces other trends in the same conceptual neighbourhood via embedding similarity.`
+              : `Based on ${recoLikedCount} trends you marked useful. Closest semantic neighbours from the unrated set, ranked by similarity (minus dislike penalty).`}>
+              {recoLikedCount === 0 || recommendations.length === 0 ? (
+                <p style={{ color: '#6b6b6b', fontSize: 12 }}>
+                  {recoLikedCount === 0
+                    ? '👍 No useful-feedback yet. Start marking trends as useful in the dashboard to seed this engine.'
+                    : 'No matching unrated trends right now.'}
+                </p>
+              ) : (
+                <>
+                  {recoSeeds.length > 0 && (
+                    <p style={{ fontSize: 11, color: '#6b6b6b', marginBottom: 10 }}>
+                      Seeded from: {recoSeeds.map((s) => <strong key={s} style={{ color: '#000', marginRight: 6 }}>{s}</strong>)}
+                    </p>
+                  )}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 10 }}>
+                    {recommendations.slice(0, 12).map((r) => (
+                      <a key={r.id} href={`/culture-radar/trends/${r.slug}`} style={{ textDecoration: 'none' }}>
+                        <div className="jai-card" style={{ padding: 12, background: '#FFFDF3', border: '1px solid #00000020', cursor: 'pointer' }}>
+                          <p className="jai-mono-label" style={{ margin: 0, fontSize: 10, color: '#FF1300' }}>
+                            ★ {(r.similarity * 100).toFixed(0)}% SIM
+                            {r.growth != null && <> · GROWTH {r.growth.toFixed(1)}</>}
+                          </p>
+                          <p style={{ margin: '4px 0', fontFamily: 'var(--font-jai-display)', fontSize: 14, textTransform: 'uppercase', letterSpacing: '-0.01em', color: '#000', lineHeight: 1.15 }}>
+                            {r.name}
+                          </p>
+                          <p style={{ margin: 0, fontSize: 11, color: '#1a1a1a', lineHeight: 1.4 }}>
+                            {r.description.slice(0, 140)}{r.description.length > 140 ? '…' : ''}
+                          </p>
+                          {r.subculture && (
+                            <p style={{ margin: '6px 0 0', fontFamily: 'var(--font-jai-display)', fontSize: 9, letterSpacing: '0.1em', color: '#000' }}>
+                              ◇ {r.subculture}
+                            </p>
+                          )}
+                        </div>
+                      </a>
+                    ))}
+                  </div>
+                </>
+              )}
+            </Section>
+
             {/* Clusters */}
             <Section title="Emerging clusters" subtitle="K-means on Gemini embeddings of fresh trends (last 14 days). Each cluster groups trends by semantic similarity — may surface unnamed meta-patterns.">
               {!clusters || clusters.clusters.length === 0 ? (
