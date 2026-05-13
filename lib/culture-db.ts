@@ -308,14 +308,15 @@ export async function updateTrend(t: UpdateTrendArgs): Promise<boolean> {
 }
 
 export async function loadActiveTrendsForRanking(week: string): Promise<
-  Array<{ id: string; popularity_score: number; freshness_score: number; validation_score: number }>
+  Array<{ id: string; popularity_score: number; freshness_score: number; validation_score: number; first_seen_at: string | null }>
 > {
   const rows = (await sql().query(
-    `SELECT id, popularity_score, freshness_score, validation_score
+    `SELECT id, popularity_score, freshness_score, validation_score,
+            first_seen_at::TEXT AS first_seen_at
        FROM culture_trends
       WHERE rank_week = $1 AND status = 'active'`,
     [week],
-  )) as Array<{ id: string; popularity_score: number; freshness_score: number; validation_score: number }>
+  )) as Array<{ id: string; popularity_score: number; freshness_score: number; validation_score: number; first_seen_at: string | null }>
   return rows
 }
 

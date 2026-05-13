@@ -711,6 +711,7 @@ async function recomputeRanks(week: string, today: string): Promise<void> {
         popularity: Number(t.popularity_score) || 0,
         freshness: Number(t.freshness_score) || 0,
         validation: Number(t.validation_score) || 0,
+        firstSeenAt: t.first_seen_at ?? null,
       }),
     }))
     .sort((a, b) => b.score - a.score)

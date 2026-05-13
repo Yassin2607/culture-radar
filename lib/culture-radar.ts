@@ -84,12 +84,27 @@ export function rankingScore(args: {
   popularity: number
   freshness: number
   validation: number
+  firstSeenAt?: string | null
 }): number {
-  const { popularity, freshness, validation } = args
+  const { popularity, freshness, validation, firstSeenAt } = args
+
+  // Recency boost: trends first seen in the last 24h get +2, last 3 days
+  // get +1. Forces the daily top to refresh as new signals come in
+  // rather than letting established hashtags (WK, big sport events)
+  // squat on positions for days.
+  let recencyBoost = 0
+  if (firstSeenAt) {
+    const ageDays = (Date.now() - new Date(firstSeenAt).getTime()) / 86_400_000
+    if (ageDays < 1) recencyBoost = 2
+    else if (ageDays < 3) recencyBoost = 1
+    else if (ageDays > 10) recencyBoost = -1  // gentle decay for stale top
+  }
+
   return (
-    0.5 * clamp(popularity, 0, 10) +
-    0.3 * clamp(freshness, 0, 10) +
-    0.2 * clamp(validation * 2, 0, 10)
+    0.35 * clamp(popularity, 0, 10) +    // was 0.5
+    0.40 * clamp(freshness, 0, 10) +     // was 0.3
+    0.20 * clamp(validation * 2, 0, 10) +
+    recencyBoost
   )
 }
 
