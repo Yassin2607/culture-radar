@@ -67,6 +67,29 @@ interface MomentForReport {
   related_topics: CultureMoment['relatedTopics']
 }
 
+export interface GtMultiCountryForReport {
+  title: string
+  countryCount: number
+  geos: string[]
+  whyNow: string | null
+  category: string | null
+  actionRelevance: string | null
+  actionAngle: string | null
+  topArticle: { title: string; url: string; source: string | null } | null
+}
+
+export interface GtCountrySpikeForReport {
+  geo: string
+  flag: string
+  title: string
+  traffic: string | null
+  whyNow: string | null
+  category: string | null
+  actionRelevance: string | null
+  actionAngle: string | null
+  topArticle: { title: string; url: string; source: string | null } | null
+}
+
 export interface ReportData {
   generatedAt: string
   week: string
@@ -79,6 +102,8 @@ export interface ReportData {
   breakout: TrendForReport[]                // growth_score 7+, predicted to grow
   bySubculture: Array<{ subculture: string; trends: TrendForReport[] }>
   byCountry: Array<{ code: string; flag: string; label: string; trends: TrendForReport[] }>
+  gtMultiCountry: GtMultiCountryForReport[]
+  gtCountrySpikes: GtCountrySpikeForReport[]
 }
 
 export async function fetchReportData(): Promise<ReportData> {
@@ -220,6 +245,9 @@ export async function fetchReportData(): Promise<ReportData> {
     }),
   )
 
+  // GT pulse: multi-country interpreted trends + per-country spikes
+  const { gtMultiCountry, gtCountrySpikes } = await fetchGtForReport()
+
   return {
     generatedAt: new Date().toISOString(),
     week,
@@ -232,7 +260,109 @@ export async function fetchReportData(): Promise<ReportData> {
     breakout,
     bySubculture,
     byCountry: byCountry.filter((c) => c.trends.length > 0),
+    gtMultiCountry,
+    gtCountrySpikes,
   }
+}
+
+async function fetchGtForReport(): Promise<{
+  gtMultiCountry: GtMultiCountryForReport[]
+  gtCountrySpikes: GtCountrySpikeForReport[]
+}> {
+  const flags: Record<string, string> = {
+    NL: '🇳🇱', BE: '🇧🇪', FR: '🇫🇷', DE: '🇩🇪', AT: '🇦🇹', CH: '🇨🇭',
+    ES: '🇪🇸', IT: '🇮🇹', PT: '🇵🇹', PL: '🇵🇱', CZ: '🇨🇿', SK: '🇸🇰',
+    HU: '🇭🇺', RO: '🇷🇴',
+  }
+
+  // Find latest snapshot date
+  const dateRows = (await sql().query(
+    `SELECT MAX(snapshot_date)::TEXT AS latest FROM culture_gt_snapshots`,
+  )) as Array<{ latest: string | null }>
+  const latest = dateRows[0]?.latest
+  if (!latest) return { gtMultiCountry: [], gtCountrySpikes: [] }
+
+  // Pull all of latest day with interpretations
+  const rows = (await sql().query(
+    `SELECT s.geo, s.rank, s.title, s.title_normalized, s.traffic,
+            s.articles,
+            i.why_now, i.category, i.action_relevance, i.action_angle
+       FROM culture_gt_snapshots s
+       LEFT JOIN culture_gt_interpretations i
+         ON i.snapshot_date = s.snapshot_date
+        AND i.title_normalized = s.title_normalized
+      WHERE s.snapshot_date = $1
+      ORDER BY s.geo, s.rank`,
+    [latest],
+  )) as Array<{
+    geo: string; rank: number; title: string; title_normalized: string;
+    traffic: string | null;
+    articles: Array<{ title: string; url: string; source: string | null }> | null;
+    why_now: string | null; category: string | null;
+    action_relevance: string | null; action_angle: string | null;
+  }>
+
+  // Multi-country: group by title_normalized, count distinct geos
+  const titleMap = new Map<string, {
+    title: string
+    geos: string[]
+    whyNow: string | null
+    category: string | null
+    actionRelevance: string | null
+    actionAngle: string | null
+    topArticle: { title: string; url: string; source: string | null } | null
+  }>()
+  for (const r of rows) {
+    const existing = titleMap.get(r.title_normalized) ?? {
+      title: r.title,
+      geos: [],
+      whyNow: r.why_now,
+      category: r.category,
+      actionRelevance: r.action_relevance,
+      actionAngle: r.action_angle,
+      topArticle: (r.articles?.[0] ?? null) as { title: string; url: string; source: string | null } | null,
+    }
+    if (!existing.geos.includes(r.geo)) existing.geos.push(r.geo)
+    titleMap.set(r.title_normalized, existing)
+  }
+  const gtMultiCountry: GtMultiCountryForReport[] = Array.from(titleMap.values())
+    .filter((t) => t.geos.length >= 3)
+    .sort((a, b) => b.geos.length - a.geos.length)
+    .slice(0, 8)
+    .map((t) => ({
+      title: t.title,
+      countryCount: t.geos.length,
+      geos: t.geos,
+      whyNow: t.whyNow,
+      category: t.category,
+      actionRelevance: t.actionRelevance,
+      actionAngle: t.actionAngle,
+      topArticle: t.topArticle,
+    }))
+
+  // Country spikes: #1 per country, sorted by action_relevance high→low
+  const byGeo = new Map<string, typeof rows[number]>()
+  for (const r of rows) {
+    if (!byGeo.has(r.geo) || r.rank < (byGeo.get(r.geo)?.rank ?? 999)) {
+      byGeo.set(r.geo, r)
+    }
+  }
+  const relRank: Record<string, number> = { high: 0, medium: 1, low: 2, none: 3 }
+  const gtCountrySpikes: GtCountrySpikeForReport[] = Array.from(byGeo.values())
+    .map((r) => ({
+      geo: r.geo,
+      flag: flags[r.geo] ?? '🌐',
+      title: r.title,
+      traffic: r.traffic,
+      whyNow: r.why_now,
+      category: r.category,
+      actionRelevance: r.action_relevance,
+      actionAngle: r.action_angle,
+      topArticle: (r.articles?.[0] ?? null) as { title: string; url: string; source: string | null } | null,
+    }))
+    .sort((a, b) => (relRank[a.actionRelevance ?? 'low'] ?? 2) - (relRank[b.actionRelevance ?? 'low'] ?? 2))
+
+  return { gtMultiCountry, gtCountrySpikes }
 }
 
 // ── HTML rendering ──────────────────────────────────────────────────────────
@@ -464,6 +594,97 @@ function renderMomentRow(m: MomentForReport): string {
     ${brief ? `<p style="margin:4px 0 0 0;font-size:11px;color:#4a4f5c;"><strong>Voor Action:</strong> ${escapeHtml(brief.contentAngle.slice(0, 200))}</p>` : ''}
   </td>
 </tr>`
+}
+
+// ── GT Multi-country: live search pulse across markets ────────────────
+
+function renderGtMultiCountrySection(items: GtMultiCountryForReport[]): string {
+  return `
+<tr><td style="background:#FFFDF3;height:32px;"></td></tr>
+<tr>
+  <td style="padding:24px 40px 8px;background:#000;border-top:6px solid #FF1300;">
+    <table cellpadding="0" cellspacing="0" border="0">
+      <tr>
+        <td style="background:#FF1300;color:#FFFDF3;padding:4px 10px;font-family:'Archivo Black',sans-serif;font-size:10px;letter-spacing:0.15em;text-transform:uppercase;font-weight:900;">🌐</td>
+        <td width="12">&nbsp;</td>
+        <td><p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#FFFDF3;">Live search · multi-country</p></td>
+      </tr>
+    </table>
+    <h2 style="margin:14px 0 4px 0;font-family:'Archivo Black',sans-serif;font-size:32px;line-height:1.05;color:#FFFDF3;text-transform:uppercase;letter-spacing:-0.02em;">🌐 Trending across<br/><span style="color:#FF1300;">${items.length} markets.</span></h2>
+    <p style="margin:8px 0 18px 0;font-family:'Inter',sans-serif;font-size:13px;color:#FFFDF3;opacity:0.7;">Google searches spiking in 3+ Action countries simultaneously. Strongest signal of a continent-wide moment.</p>
+  </td>
+</tr>
+<tr><td style="padding:0 40px 24px;background:#000;">
+  <table cellpadding="0" cellspacing="0" border="0" width="100%">
+    ${items.map((m) => {
+      const isHigh = m.actionRelevance === 'high'
+      return `
+    <tr><td style="padding:0 0 14px 0;">
+      <table cellpadding="0" cellspacing="0" border="0" width="100%" style="background:${isHigh ? '#1a0000' : '#1a1a1a'};border:1px solid ${isHigh ? '#FF1300' : '#333'};">
+        <tr>
+          <td style="padding:14px 18px;">
+            <p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:10px;letter-spacing:0.15em;color:#FF1300;text-transform:uppercase;">${m.countryCount}× · ${m.category ? escapeHtml(m.category).toUpperCase() : 'TRENDING'} ${m.actionRelevance && m.actionRelevance !== 'none' ? `· ACTION ${m.actionRelevance.toUpperCase()}` : ''}</p>
+            <h3 style="margin:6px 0 0 0;font-family:'Archivo Black',sans-serif;font-size:20px;line-height:1.1;color:#FFFDF3;text-transform:uppercase;letter-spacing:-0.01em;">${escapeHtml(m.title)}</h3>
+            <p style="margin:6px 0 0 0;font-family:'Inter',sans-serif;font-size:10px;color:#FFFDF3;opacity:0.4;letter-spacing:0.05em;">${m.geos.slice(0, 14).join(' · ')}</p>
+            ${m.whyNow ? `<p style="margin:10px 0 0 0;font-family:'Inter',sans-serif;font-size:13px;line-height:1.45;color:#FFFDF3;opacity:0.9;">${escapeHtml(m.whyNow)}</p>` : ''}
+            ${m.actionAngle ? `<p style="margin:8px 0 0 0;font-family:'Inter',sans-serif;font-size:12px;line-height:1.4;padding:8px 10px;background:#FF1300;color:#FFFDF3;"><strong style="font-family:'Archivo Black',sans-serif;font-size:9px;letter-spacing:0.12em;">ACTION ANGLE: </strong>${escapeHtml(m.actionAngle)}</p>` : ''}
+            ${m.topArticle?.url ? `<p style="margin:8px 0 0 0;"><a href="${escapeHtml(m.topArticle.url)}" style="color:#FF1300;font-family:'Archivo Black',sans-serif;font-size:9px;letter-spacing:0.12em;text-decoration:none;">→ ${escapeHtml(m.topArticle.source ?? 'SOURCE').toUpperCase()}</a></p>` : ''}
+          </td>
+        </tr>
+      </table>
+    </td></tr>`
+    }).join('')}
+  </table>
+</td></tr>`
+}
+
+// ── GT Country spikes: top spike per market with article context ──────
+
+function renderGtCountrySpikesSection(items: GtCountrySpikeForReport[]): string {
+  return `
+<tr><td style="background:#FFFDF3;height:32px;"></td></tr>
+<tr>
+  <td style="padding:24px 40px 8px;background:#FFFDF3;border-top:2px solid #000;">
+    <table cellpadding="0" cellspacing="0" border="0">
+      <tr>
+        <td style="background:#000;color:#FFFDF3;padding:4px 10px;font-family:'Archivo Black',sans-serif;font-size:10px;letter-spacing:0.15em;text-transform:uppercase;font-weight:900;">📊</td>
+        <td width="12">&nbsp;</td>
+        <td><p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#000;">Live search · per country</p></td>
+      </tr>
+    </table>
+    <h2 style="margin:14px 0 4px 0;font-family:'Archivo Black',sans-serif;font-size:32px;line-height:1.05;color:#000;text-transform:uppercase;letter-spacing:-0.02em;">📊 What's spiking<br/><span style="color:#FF1300;">in each market.</span></h2>
+    <p style="margin:8px 0 18px 0;font-family:'Inter',sans-serif;font-size:13px;color:#000;opacity:0.7;">Top Google search spike per Action country. Country-specifieke verhalen die alleen daar relevant zijn.</p>
+  </td>
+</tr>
+<tr><td style="padding:0 40px;background:#FFFDF3;">
+  <table cellpadding="0" cellspacing="0" border="0" width="100%">
+    ${items.map((s) => {
+      const isHigh = s.actionRelevance === 'high'
+      return `
+    <tr><td style="padding:0 0 12px 0;">
+      <table cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#FFFDF3;border:1px solid #000;border-left:6px solid ${isHigh ? '#FF1300' : '#000'};">
+        <tr>
+          <td width="100" valign="top" style="padding:14px;background:#000;text-align:center;">
+            <p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:28px;line-height:1;">${s.flag}</p>
+            <p style="margin:6px 0 0 0;font-family:'Archivo Black',sans-serif;font-size:11px;letter-spacing:0.15em;color:#FFFDF3;text-transform:uppercase;">${escapeHtml(s.geo)}</p>
+            ${s.traffic ? `<p style="margin:4px 0 0 0;font-family:'Archivo Black',sans-serif;font-size:9px;letter-spacing:0.1em;color:#FF1300;">${escapeHtml(s.traffic)}</p>` : ''}
+          </td>
+          <td valign="top" style="padding:12px 14px;">
+            <div style="margin:0 0 4px 0;">
+              ${s.category ? `<span style="display:inline-block;background:#000;color:#FFFDF3;padding:2px 7px;margin-right:4px;font-family:'Archivo Black',sans-serif;font-size:8px;letter-spacing:0.1em;text-transform:uppercase;">${escapeHtml(s.category)}</span>` : ''}
+              ${s.actionRelevance && s.actionRelevance !== 'none' ? `<span style="display:inline-block;background:${isHigh ? '#FF1300' : '#FFE4E0'};color:${isHigh ? '#FFFDF3' : '#FF1300'};padding:2px 7px;font-family:'Archivo Black',sans-serif;font-size:8px;letter-spacing:0.1em;text-transform:uppercase;">ACTION ${escapeHtml(s.actionRelevance)}</span>` : ''}
+            </div>
+            <h3 style="margin:4px 0 0 0;font-family:'Archivo Black',sans-serif;font-size:18px;line-height:1.1;color:#000;text-transform:uppercase;letter-spacing:-0.01em;">${escapeHtml(s.title)}</h3>
+            ${s.whyNow ? `<p style="margin:8px 0 0 0;font-family:'Inter',sans-serif;font-size:12px;line-height:1.45;color:#1f2937;">${escapeHtml(s.whyNow)}</p>` : ''}
+            ${s.actionAngle ? `<p style="margin:8px 0 0 0;font-family:'Inter',sans-serif;font-size:11px;line-height:1.4;padding:6px 10px;background:#FFE4E0;border-left:3px solid #FF1300;color:#000;"><strong style="font-family:'Archivo Black',sans-serif;font-size:8px;letter-spacing:0.12em;color:#FF1300;">ANGLE: </strong>${escapeHtml(s.actionAngle)}</p>` : ''}
+            ${s.topArticle?.url ? `<p style="margin:8px 0 0 0;"><a href="${escapeHtml(s.topArticle.url)}" style="font-family:'Inter',sans-serif;font-size:11px;color:#000;text-decoration:none;padding:4px 8px;background:#FAF6E6;border-left:2px solid #000;display:inline-block;line-height:1.3;">→ ${escapeHtml(s.topArticle.title.slice(0, 80))}${s.topArticle.title.length > 80 ? '…' : ''}${s.topArticle.source ? ` <span style="color:#6b6b6b;">· ${escapeHtml(s.topArticle.source)}</span>` : ''}</a></p>` : ''}
+          </td>
+        </tr>
+      </table>
+    </td></tr>`
+    }).join('')}
+  </table>
+</td></tr>`
 }
 
 // ── Breakout section: highest growth_score, predictive ──────────────────
@@ -718,7 +939,7 @@ export function renderReportHtml(data: ReportData): string {
                 </td>
                 <td valign="top" style="padding-left:24px;border-left:2px solid #000;">
                   <p style="margin:0;font-family:'Newsreader',Georgia,serif;font-size:18px;line-height:1.55;color:#000;font-weight:400;">
-                    Vandaag staan er <strong>${data.dailyTop10.length} trends</strong> bovenaan, <strong>${data.breakout.length} signalen</strong> die onze predictor verwacht binnen 14 dagen door te breken, <strong>${data.byCountry.length} landen</strong> met eigen pulse, en <strong>${data.bySubculture.length} actieve subcultures</strong>. Plus <strong>${data.inspiration.length} formats</strong> om over te nemen, <strong>${data.creators.length} creators</strong> om te volgen, en <strong>${data.upcomingMoments.length} moments</strong> in de komende drie weken.
+                    Vandaag: <strong>${data.dailyTop10.length} top trends</strong>, <strong>${data.gtMultiCountry.length} Google-search trends in 3+ landen</strong>, <strong>${data.gtCountrySpikes.length} country spikes</strong> met interpretatie, <strong>${data.breakout.length} signalen</strong> die volgens onze predictor binnen 14 dagen doorbreken, <strong>${data.bySubculture.length} actieve subcultures</strong>, <strong>${data.inspiration.length} formats</strong> om over te nemen, <strong>${data.creators.length} creators</strong>, en <strong>${data.upcomingMoments.length} moments</strong> in de komende drie weken.
                   </p>
                   <p style="margin:12px 0 0 0;font-family:'Inter',sans-serif;font-size:12px;color:#6b6b6b;">
                     Klik op een trend om de bron te openen. Sounds met <strong style="color:#FF1300;">✓ SAFE</strong> zijn rechtenvrij te gebruiken op Action's TikTok Business Account.
@@ -748,6 +969,10 @@ export function renderReportHtml(data: ReportData): string {
             ${data.dailyTop10.map((t) => renderTrendCard(t, { showRank: true })).join('')}
           </table>
         </td></tr>
+
+        ${data.gtMultiCountry.length > 0 ? renderGtMultiCountrySection(data.gtMultiCountry) : ''}
+
+        ${data.gtCountrySpikes.length > 0 ? renderGtCountrySpikesSection(data.gtCountrySpikes) : ''}
 
         ${data.breakout.length > 0 ? renderBreakoutSection(data.breakout) : ''}
 
