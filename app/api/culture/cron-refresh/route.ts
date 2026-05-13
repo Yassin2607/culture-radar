@@ -25,6 +25,7 @@ import { POST as recomputeBundlesHandler } from '@/app/api/culture/recompute-bun
 import { POST as enrichMindmapsHandler } from '@/app/api/culture/enrich-mindmaps/route'
 import { POST as enrichCountriesHandler } from '@/app/api/culture/enrich-countries/route'
 import { POST as momentsFetchHandler } from '@/app/api/moments/fetch/route'
+import { refreshMomentStatuses } from '@/lib/moments-db'
 import { POST as momentsBriefsHandler } from '@/app/api/moments/backfill-briefs/route'
 import { POST as momentsEnrichHandler } from '@/app/api/moments/enrich-topics/route'
 import { sql } from '@/lib/culture-db'
@@ -113,6 +114,15 @@ export async function GET(req: NextRequest) {
     } catch (err) {
       momentsError = err instanceof Error ? err.message : String(err)
     }
+  }
+
+  // ── Daily moment status refresh ───────────────────────────────────────
+  // Moves moments through upcoming -> happening -> archived based on
+  // their next_occurrence + typical_duration_days. Cheap single SQL.
+  try {
+    await refreshMomentStatuses()
+  } catch {
+    /* best-effort */
   }
 
   // ── Step 1: fetch (scrape + AI + rank + archive) ───────────────────────

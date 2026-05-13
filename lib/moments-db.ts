@@ -54,11 +54,28 @@ export async function listMoments(args: ListMomentsArgs = {}): Promise<MomentRow
   const conditions: string[] = []
   const params: unknown[] = []
 
+  // We derive an "effective next date" from country_dates on the fly:
+  // the earliest date in country_dates that is today or later. This is
+  // robust to a moment having one country's date already in the past
+  // while another country's date is still upcoming — the moment stays
+  // visible until ALL its country dates have passed, not just the
+  // earliest one. The stored next_occurrence column may go stale
+  // between cron refreshes, so we don't rely on it for filter/order.
+  const effectiveNextSql = `(
+    SELECT MIN((cd->>'date')::date)
+      FROM jsonb_array_elements(country_dates) AS cd
+     WHERE (cd->>'date')::date >= CURRENT_DATE
+  )`
+
   if (!args.includeArchived) {
     conditions.push(`status <> 'archived'`)
-    // Hide moments whose next occurrence is already in the past. Past
-    // moments stay in the DB (for history) but don't clutter the planner.
-    conditions.push(`(next_occurrence IS NULL OR next_occurrence >= CURRENT_DATE)`)
+    // Show the moment if there's ANY country date still in the future,
+    // OR fall back to the stored next_occurrence column for moments
+    // with empty country_dates.
+    conditions.push(`(
+      ${effectiveNextSql} IS NOT NULL
+      OR (next_occurrence IS NULL OR next_occurrence >= CURRENT_DATE)
+    )`)
   }
 
   if (args.tier) {
@@ -76,27 +93,32 @@ export async function listMoments(args: ListMomentsArgs = {}): Promise<MomentRow
   }
   if (args.horizonDays && args.horizonDays > 0) {
     params.push(args.horizonDays)
-    conditions.push(`(next_occurrence IS NULL OR next_occurrence <= CURRENT_DATE + ($${params.length}::int * INTERVAL '1 day'))`)
+    // Use the dynamic effective_next here too, so a moment with an
+    // upcoming NL date 50 days out doesn't get filtered out just
+    // because the stored next_occurrence is now in the past.
+    conditions.push(`(
+      ${effectiveNextSql} IS NULL
+      OR ${effectiveNextSql} <= CURRENT_DATE + ($${params.length}::int * INTERVAL '1 day')
+    )`)
   }
 
   const limit = Math.min(500, args.limit ?? 200)
   params.push(limit)
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
-  // Cast next_occurrence to TEXT to avoid the Postgres DATE → JS Date
-  // round-trip that shifts the day by ±1 depending on the server's local
-  // TZ (CET/CEST is UTC+1/+2, so a DATE '2026-05-14' came back as
-  // '2026-05-13T22:00:00Z' and the UI rendered it one day early).
+  // Order by the dynamic effective_next so moments with already-passed
+  // first dates surface at the position of their NEXT upcoming country.
   const rows = (await sql().query(
     `SELECT id, created_at, updated_at, name, slug, description, tier,
             cultural_relevance, category, scope, country_dates,
-            next_occurrence::TEXT AS next_occurrence,
+            COALESCE(${effectiveNextSql}, next_occurrence)::TEXT AS next_occurrence,
             recurring, typical_duration_days, hashtags, example_urls,
             thumbnail_url, brand_brief, source_names, reasoning, status,
             related_topics
        FROM culture_moments
        ${where}
-       ORDER BY next_occurrence ASC NULLS LAST, cultural_relevance DESC
+       ORDER BY COALESCE(${effectiveNextSql}, next_occurrence) ASC NULLS LAST,
+                cultural_relevance DESC
        LIMIT $${params.length}`,
     params,
   )) as MomentRowDB[]
