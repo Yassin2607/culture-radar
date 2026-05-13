@@ -89,7 +89,9 @@ interface RawDailyTrends {
 }
 
 async function fetchDailyTrendsJson(geo: string, hl: string): Promise<GoogleTrendItem[]> {
-  const url = `https://trends.google.com/trends/api/dailytrends?hl=${encodeURIComponent(hl)}&tz=-60&geo=${encodeURIComponent(geo)}&ns=15`
+  // ns=20 stretches the daily window. Google trims to what's actually trending,
+  // so this is a soft request — typically returns 15-25 items.
+  const url = `https://trends.google.com/trends/api/dailytrends?hl=${encodeURIComponent(hl)}&tz=-60&geo=${encodeURIComponent(geo)}&ns=20`
   const res = await fetch(url, {
     headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' },
   })

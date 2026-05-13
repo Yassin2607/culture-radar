@@ -1077,6 +1077,10 @@ interface GtPulseData {
     geos: Array<{ geo: string; rank: number }>
     relatedQueries: string[]
     articles: Array<{ title: string; url: string; source: string | null }>
+    whyNow?: string | null
+    category?: string | null
+    actionRelevance?: 'high' | 'medium' | 'low' | 'none' | null
+    actionAngle?: string | null
   }>
   newToday: Array<{ title: string; geo: string; rank: number; articles: Array<{ title: string; url: string; source: string | null }> | null }>
   risingFast: Array<{ title: string; geo: string; rankToday: number; rankYesterday: number; delta: number }>
@@ -1132,19 +1136,57 @@ function GoogleTrendsPulse() {
             <p style={{ margin: '4px 0 10px 0', fontSize: 11, opacity: 0.6 }}>
               Searches trending in 3+ Action markets right now
             </p>
-            <ol style={{ margin: 0, padding: '0 0 0 18px' }}>
-              {data.multiCountry.slice(0, 8).map((m, i) => (
-                <li key={i} style={{ marginBottom: 8, fontSize: 13, lineHeight: 1.35 }}>
-                  <strong>{m.title}</strong>
-                  <span style={{ marginLeft: 6, fontFamily: 'var(--font-jai-display)', fontSize: 9, letterSpacing: '0.1em', color: '#FF1300' }}>
-                    {m.countryCount}×
-                  </span>
-                  <div style={{ marginTop: 2, fontSize: 10, color: '#FFFDF3', opacity: 0.5, letterSpacing: '0.05em' }}>
-                    {m.geos.slice(0, 8).map((g) => flag(g.geo)).join(' ')}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {data.multiCountry.slice(0, 8).map((m, i) => {
+                const relColor = m.actionRelevance === 'high' ? '#FF1300'
+                  : m.actionRelevance === 'medium' ? '#FFFDF3'
+                  : '#9ca3af'
+                return (
+                  <div key={i} style={{ paddingBottom: 8, borderBottom: '1px solid #FFFDF310' }}>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                      <strong style={{ fontSize: 14 }}>{m.title}</strong>
+                      <span style={{ fontFamily: 'var(--font-jai-display)', fontSize: 9, letterSpacing: '0.1em', color: '#FF1300' }}>
+                        {m.countryCount}×
+                      </span>
+                      {m.category && (
+                        <span style={{ fontFamily: 'var(--font-jai-display)', fontSize: 8, letterSpacing: '0.1em', padding: '1px 5px', background: '#FFFDF315', color: '#FFFDF3', textTransform: 'uppercase' }}>
+                          {m.category}
+                        </span>
+                      )}
+                      {m.actionRelevance && m.actionRelevance !== 'none' && (
+                        <span style={{ fontFamily: 'var(--font-jai-display)', fontSize: 8, letterSpacing: '0.1em', padding: '1px 5px', background: relColor === '#FF1300' ? '#FF1300' : relColor === '#FFFDF3' ? '#FFFDF330' : 'transparent', color: relColor === '#9ca3af' ? '#9ca3af' : '#FFFDF3', textTransform: 'uppercase', border: relColor === '#9ca3af' ? '1px solid #9ca3af40' : 'none' }}>
+                          ACTION {m.actionRelevance}
+                        </span>
+                      )}
+                    </div>
+                    {m.whyNow && (
+                      <p style={{ margin: '4px 0 0 0', fontSize: 12, lineHeight: 1.4, color: '#FFFDF3', opacity: 0.85 }}>
+                        {m.whyNow}
+                      </p>
+                    )}
+                    {m.actionAngle && (
+                      <p style={{ margin: '4px 0 0 0', fontSize: 11, lineHeight: 1.4, color: '#FF1300' }}>
+                        <strong style={{ fontFamily: 'var(--font-jai-display)', fontSize: 9, letterSpacing: '0.1em' }}>ANGLE: </strong>
+                        <span style={{ color: '#FFFDF3', opacity: 0.85 }}>{m.actionAngle}</span>
+                      </p>
+                    )}
+                    <div style={{ marginTop: 4, fontSize: 11, color: '#FFFDF3', opacity: 0.4, letterSpacing: '0.05em' }}>
+                      {m.geos.slice(0, 14).map((g) => flag(g.geo)).join(' ')}
+                    </div>
+                    {m.articles.length > 0 && m.articles[0].url && (
+                      <a
+                        href={m.articles[0].url}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ marginTop: 4, display: 'inline-block', fontSize: 10, color: '#FF1300', textDecoration: 'underline', fontFamily: 'var(--font-jai-display)', letterSpacing: '0.08em' }}
+                      >
+                        → {(m.articles[0].source ?? 'SOURCE').toUpperCase()}
+                      </a>
+                    )}
                   </div>
-                </li>
-              ))}
-            </ol>
+                )
+              })}
+            </div>
           </div>
         )}
 

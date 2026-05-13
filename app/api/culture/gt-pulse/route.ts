@@ -15,6 +15,17 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { sql } from '@/lib/culture-db'
+import { interpretGtTrends } from '@/lib/gt-interpret'
+
+function normalize(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
 
 interface SnapshotRow {
   geo: string
@@ -81,7 +92,7 @@ export async function GET(_req: NextRequest) {
     titleMap.set(key, existing)
   }
 
-  const multiCountry = Array.from(titleMap.values())
+  const multiCountryBase = Array.from(titleMap.values())
     .filter((t) => t.geos.length >= 3)
     .map((t) => ({
       title: t.title,
@@ -96,6 +107,72 @@ export async function GET(_req: NextRequest) {
       if (a.countryCount !== b.countryCount) return b.countryCount - a.countryCount
       return a.avgRank - b.avgRank
     })
+    .slice(0, 20)  // cap before Gemini call
+
+  // ── Layer Gemini interpretations on top (cached per day per title) ──
+  await sql().query(`
+    CREATE TABLE IF NOT EXISTS culture_gt_interpretations (
+      snapshot_date DATE NOT NULL,
+      title_normalized TEXT NOT NULL,
+      title TEXT NOT NULL,
+      why_now TEXT,
+      category TEXT,
+      action_relevance TEXT,
+      action_angle TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      PRIMARY KEY (snapshot_date, title_normalized)
+    )
+  `)
+
+  const cached = (await sql().query(
+    `SELECT title_normalized, why_now, category, action_relevance, action_angle
+       FROM culture_gt_interpretations
+      WHERE snapshot_date = CURRENT_DATE`,
+  )) as Array<{ title_normalized: string; why_now: string | null; category: string | null; action_relevance: string | null; action_angle: string | null }>
+  const cacheMap = new Map(cached.map((c) => [c.title_normalized, c]))
+
+  const needsInterpret = multiCountryBase.filter((m) => !cacheMap.has(normalize(m.title)))
+  if (needsInterpret.length > 0) {
+    const fresh = await interpretGtTrends(needsInterpret.map((m) => ({
+      title: m.title,
+      countryCount: m.countryCount,
+      geos: m.geos.map((g) => g.geo),
+      relatedQueries: m.relatedQueries,
+      articles: m.articles,
+    })))
+    for (const f of fresh) {
+      const key = normalize(f.title)
+      await sql().query(
+        `INSERT INTO culture_gt_interpretations
+           (snapshot_date, title_normalized, title, why_now, category, action_relevance, action_angle)
+         VALUES (CURRENT_DATE, $1, $2, $3, $4, $5, $6)
+         ON CONFLICT (snapshot_date, title_normalized) DO UPDATE SET
+           why_now = EXCLUDED.why_now,
+           category = EXCLUDED.category,
+           action_relevance = EXCLUDED.action_relevance,
+           action_angle = EXCLUDED.action_angle`,
+        [key, f.title, f.whyNow, f.category, f.actionRelevance, f.actionAngle],
+      )
+      cacheMap.set(key, {
+        title_normalized: key,
+        why_now: f.whyNow,
+        category: f.category,
+        action_relevance: f.actionRelevance,
+        action_angle: f.actionAngle,
+      })
+    }
+  }
+
+  const multiCountry = multiCountryBase.map((m) => {
+    const c = cacheMap.get(normalize(m.title))
+    return {
+      ...m,
+      whyNow: c?.why_now ?? null,
+      category: c?.category ?? null,
+      actionRelevance: c?.action_relevance ?? null,
+      actionAngle: c?.action_angle ?? null,
+    }
+  })
 
   // 2) New today vs yesterday: per country, titles present today but not yesterday
   const yesterdayByGeo = new Map<string, Set<string>>()
