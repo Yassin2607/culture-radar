@@ -314,6 +314,11 @@ export async function scrapeSource(source: SourceRow, lookbackDays: number): Pro
   if (source.source_type === 'tiktok_cc_hashtag') {
     return scrapeTikTokCC(source)
   }
+  // Reddit subreddits: bypass Firecrawl (it doesn't support reddit.com)
+  // and use Reddit's free public JSON API instead. No auth needed.
+  if (source.source_type === 'reddit') {
+    return scrapeRedditJson(source)
+  }
   // TikTok /discover/{slug} pages get a dedicated structured parser
   // that extracts video + creator data directly from the rendered HTML.
   // Bypasses Gemini hallucination for the video list.
@@ -593,6 +598,117 @@ export function convertCCHashtagsToTrends(
       ],
     }
   })
+}
+
+/**
+ * Reddit subreddit scrape via the free public JSON API.
+ *
+ * Firecrawl doesn't support reddit.com (blocked at their end), so we
+ * hit the JSON endpoint directly. No auth or API key required — Reddit
+ * publishes top-of-week posts as plain JSON at:
+ *   https://www.reddit.com/r/SUBREDDIT/top.json?t=week
+ *
+ * We accept any URL pattern in the source row (some legacy entries
+ * have `.json` already, others have the HTML `/top/?t=week` form) and
+ * normalise to the JSON variant. Returns a markdown-ish summary of the
+ * top posts so the downstream Gemini pipeline can extract trends.
+ */
+async function scrapeRedditJson(source: SourceRow): Promise<ScrapeResult> {
+  const fetchedAt = new Date().toISOString()
+
+  // Normalise the URL to the JSON endpoint with top-of-week scope.
+  // Examples we accept:
+  //   https://www.reddit.com/r/foo/.json
+  //   https://www.reddit.com/r/foo/top/?t=week
+  //   https://www.reddit.com/r/foo/
+  const m = source.url.match(/reddit\.com\/r\/([^/?#]+)/i)
+  const sub = m?.[1]
+  if (!sub) {
+    return {
+      sourceId: source.id, sourceName: source.name, sourceCategory: source.category,
+      url: source.url, ok: false, fetchedAt,
+      textSnippet: '', topLinks: [], error: 'reddit_url_no_subreddit',
+    }
+  }
+  const jsonUrl = `https://www.reddit.com/r/${sub}/top.json?t=week&limit=25`
+
+  try {
+    const ctrl = new AbortController()
+    const tid = setTimeout(() => ctrl.abort(), 15_000)
+    const res = await fetch(jsonUrl, {
+      signal: ctrl.signal,
+      headers: {
+        // Reddit requires a non-empty UA that isn't a bare "Mozilla"
+        // default; they 429 anything that looks like a scraper. Custom
+        // identifier per their public API guidelines.
+        'User-Agent': 'CultureRadarBot/1.0 (https://action-culture-radar.vercel.app)',
+        Accept: 'application/json',
+      },
+    })
+    clearTimeout(tid)
+    if (!res.ok) {
+      return {
+        sourceId: source.id, sourceName: source.name, sourceCategory: source.category,
+        url: source.url, ok: false, fetchedAt,
+        textSnippet: '', topLinks: [], error: `reddit http ${res.status}`,
+      }
+    }
+    const data = (await res.json()) as {
+      data?: { children?: Array<{ data?: RedditPost }> }
+    }
+    const posts = (data.data?.children ?? [])
+      .map((c) => c.data)
+      .filter((p): p is RedditPost => !!p && !p.stickied)
+
+    if (posts.length === 0) {
+      return {
+        sourceId: source.id, sourceName: source.name, sourceCategory: source.category,
+        url: source.url, ok: false, fetchedAt,
+        textSnippet: '', topLinks: [], error: 'reddit_empty',
+      }
+    }
+
+    // Format top posts as a markdown digest. Includes title, score,
+    // comment count, optional self-text excerpt, and the post URL —
+    // enough signal for Gemini to spot recurring subjects + aesthetics.
+    const lines: string[] = [`# r/${sub} — top of week`, '']
+    for (const p of posts.slice(0, 25)) {
+      lines.push(`## ${p.title}`)
+      lines.push(`Score: ${p.score} · Comments: ${p.num_comments} · Flair: ${p.link_flair_text ?? '—'}`)
+      const body = (p.selftext ?? '').trim().slice(0, 400)
+      if (body) lines.push(body)
+      lines.push(`Link: https://reddit.com${p.permalink}`)
+      if (p.url && p.url !== `https://reddit.com${p.permalink}`) lines.push(`Media: ${p.url}`)
+      lines.push('')
+    }
+    const markdown = lines.join('\n')
+    const topLinks = posts.slice(0, 20).map((p) => `https://reddit.com${p.permalink}`)
+
+    return {
+      sourceId: source.id, sourceName: source.name, sourceCategory: source.category,
+      url: source.url, ok: true, fetchedAt,
+      textSnippet: markdown.slice(0, 12_000),
+      topLinks,
+    }
+  } catch (err) {
+    return {
+      sourceId: source.id, sourceName: source.name, sourceCategory: source.category,
+      url: source.url, ok: false, fetchedAt,
+      textSnippet: '', topLinks: [],
+      error: err instanceof Error ? err.message : String(err),
+    }
+  }
+}
+
+interface RedditPost {
+  title: string
+  score: number
+  num_comments: number
+  link_flair_text?: string | null
+  selftext?: string
+  permalink: string
+  url?: string
+  stickied?: boolean
 }
 
 /**
