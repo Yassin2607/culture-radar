@@ -139,7 +139,11 @@ async function fetchAndExtract(url: string): Promise<ArticleDateResult> {
     }
 
     const html = await res.text()
-    const truncated = html.slice(0, 200_000) // first 200KB enough for <head>
+    // Cap at 1MB: most sites have date signals in <head> (first ~50KB),
+    // but some (Next.js sites like Babylist) put JSON-LD lower in the
+    // body. 1MB covers virtually every real-world article without
+    // letting a pathological page exhaust memory.
+    const truncated = html.slice(0, 1_000_000)
 
     const extracted = extractDateFromHtml(truncated) ?? {
       date: extractDateFromUrlPath(url),
@@ -253,6 +257,25 @@ function extractDateFromHtml(
       const d = new Date(m[1])
       if (!isNaN(d.getTime())) return { date: d, source: 'meta-other' }
     }
+  }
+
+  // 4b. Schema.org microdata: <meta itemprop="datePublished" content="..."> /
+  //     <meta itemprop="dateCreated" content="...">. Pressat, some
+  //     WordPress themes, and older CMSes use this. content + itemprop
+  //     can appear in either order.
+  const itempropForward = html.match(
+    /<meta[^>]+itemprop=["'](?:datePublished|dateCreated)["'][^>]+content=["']([^"']+)["']/i,
+  )
+  if (itempropForward) {
+    const d = new Date(itempropForward[1])
+    if (!isNaN(d.getTime())) return { date: d, source: 'meta-other' }
+  }
+  const itempropReverse = html.match(
+    /<meta[^>]+content=["']([^"']+)["'][^>]+itemprop=["'](?:datePublished|dateCreated)["']/i,
+  )
+  if (itempropReverse) {
+    const d = new Date(itempropReverse[1])
+    if (!isNaN(d.getTime())) return { date: d, source: 'meta-other' }
   }
 
   // 5. <time datetime="..." pubdate> or first <time datetime="...">

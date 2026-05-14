@@ -95,6 +95,11 @@ function extractDateFromHtml(html) {
     const x = html.match(re)
     if (x) { const d = new Date(x[1]); if (!isNaN(d.getTime())) return { date: d, source: 'meta-other' } }
   }
+  // Schema.org microdata (Pressat, older WordPress themes)
+  let ip = html.match(/<meta[^>]+itemprop=["'](?:datePublished|dateCreated)["'][^>]+content=["']([^"']+)["']/i)
+  if (ip) { const d = new Date(ip[1]); if (!isNaN(d.getTime())) return { date: d, source: 'meta-other' } }
+  ip = html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+itemprop=["'](?:datePublished|dateCreated)["']/i)
+  if (ip) { const d = new Date(ip[1]); if (!isNaN(d.getTime())) return { date: d, source: 'meta-other' } }
   m = html.match(/<time[^>]+datetime=["']([^"']+)["'][^>]*pubdate/i)
   if (m) { const d = new Date(m[1]); if (!isNaN(d.getTime())) return { date: d, source: 'time-tag' } }
   m = html.match(/<time[^>]+datetime=["']([^"']+)["']/i)
@@ -138,7 +143,7 @@ async function fetchAndExtract(url) {
       const d = extractDateFromUrlPath(url)
       return { publishedAt: d, source: d ? 'url-path' : 'none', httpStatus: res.status, error: `http ${res.status}` }
     }
-    const html = (await res.text()).slice(0, 200_000)
+    const html = (await res.text()).slice(0, 1_000_000)
     const ex = extractDateFromHtml(html) ?? { date: extractDateFromUrlPath(url), source: 'url-path' }
     return { publishedAt: ex.date, source: ex.date ? ex.source : 'none', httpStatus: res.status, error: null }
   } catch (err) {
