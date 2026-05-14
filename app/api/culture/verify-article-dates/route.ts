@@ -150,7 +150,11 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url)
   const dryRun = url.searchParams.get('dryRun') !== '0'
   const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '200', 10), 1000)
-  const maxAgeDays = parseInt(url.searchParams.get('maxAgeDays') ?? '14', 10)
+  // 30-day default: trend-roundup blogs (Epidemic Sound, Later, Clipchamp,
+  // etc.) often describe trends that stay viral for weeks after the blog
+  // post. A 14-day cap kicked out legitimate active trends like "Top 5
+  // Horror Movies" just because their roundup source was 3 weeks old.
+  const maxAgeDays = parseInt(url.searchParams.get('maxAgeDays') ?? '30', 10)
   const concurrency = Math.min(parseInt(url.searchParams.get('concurrency') ?? '8', 10), 16)
 
   const out = await run({ dryRun, limit, maxAgeDays, concurrency })

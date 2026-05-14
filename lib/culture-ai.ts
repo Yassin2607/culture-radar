@@ -79,12 +79,13 @@ Window: ${windowDescription}.
 
 # RECENCY HARD CAP
 Today's date is ${new Date().toISOString().slice(0, 10)}.
-ONLY extract trends backed by content from the last 14 days. If an article,
-post, or example in the content explicitly references a date older than 14
+ONLY extract trends backed by content from the last 30 days. If an article,
+post, or example in the content explicitly references a date older than 30
 days ago (look for visible dates, "${new Date().getFullYear() - 1}" mentions,
 "Last summer", "two months ago", archive URLs with old year-month segments)
-then SKIP it. A trend that was big in 2025 but isn't currently referenced
-this month does NOT belong here. When in doubt, skip.
+then SKIP it. A trend-roundup blog from 3 weeks ago is OK if it describes
+trends still going strong. A trend that was big in 2024 and isn't
+currently referenced does NOT belong here. When in doubt, skip.
 
 # CRITICAL: SPECIFICITY RULES
 Every trend MUST be specific and named. Generic category names are REJECTED.

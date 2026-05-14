@@ -286,7 +286,7 @@ export async function GET(req: NextRequest) {
   let articleDatesArchived = 0
   try {
     const res = await fetch(
-      `${origin}/api/culture/verify-article-dates?dryRun=0&limit=200&maxAgeDays=14&concurrency=8`,
+      `${origin}/api/culture/verify-article-dates?dryRun=0&limit=200&maxAgeDays=30&concurrency=8`,
       {
         method: 'GET',
         headers: { authorization: expectedBearer },

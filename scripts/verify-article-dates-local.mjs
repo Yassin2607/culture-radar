@@ -22,7 +22,7 @@ const sql = neon(process.env.POSTGRES_URL)
 
 const apply = process.argv[2] === 'run'
 const limit = parseInt(process.argv[3] ?? '50', 10)
-const maxAgeDays = parseInt(process.argv[4] ?? '14', 10)
+const maxAgeDays = parseInt(process.argv[4] ?? '30', 10)
 const concurrency = 8
 const FETCH_TIMEOUT_MS = 8000
 
