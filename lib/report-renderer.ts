@@ -287,14 +287,24 @@ export async function fetchReportData(): Promise<ReportData> {
   const editorPicks = deriveEditorPicks(dailyTop10, breakout, bySubculture)
   const snapshotsByTrendId = await fetchTopTrendSnapshots(dailyTop10.slice(0, 5).map((t) => t.id))
 
-  // AI-generated cinematic hero images for trends without a real thumbnail
-  // (top 3 only — cost-bounded). Cached per (trend_id, day).
-  const needsImage = dailyTop10.slice(0, 3).filter((t) => !t.thumbnail_url)
-  let heroImages = new Map<string, string>()
-  if (needsImage.length > 0 && process.env.GOOGLE_API_KEY) {
+  // AI-generated cinematic hero images for the top 10 daily trends +
+  // the breakout section + editor picks that lack a real thumbnail.
+  // Cached per (trend_id, day), 3-way concurrent — cost-bounded.
+  const imageCandidates: TrendForReport[] = []
+  const seen = new Set<string>()
+  const addIfNeedsImage = (t: TrendForReport | undefined) => {
+    if (!t || !t.id || seen.has(t.id) || t.thumbnail_url) return
+    seen.add(t.id)
+    imageCandidates.push(t)
+  }
+  for (const t of dailyTop10.slice(0, 10)) addIfNeedsImage(t)
+  for (const t of breakout.slice(0, 3)) addIfNeedsImage(t)
+  for (const p of editorPicks) addIfNeedsImage(p.trend)
+
+  if (imageCandidates.length > 0 && process.env.GOOGLE_API_KEY) {
     try {
-      heroImages = await generateHeroImagesForReport(
-        needsImage.map((t) => ({
+      const heroImages = await generateHeroImagesForReport(
+        imageCandidates.map((t) => ({
           trendId: t.id,
           name: t.name,
           description: t.description,
@@ -302,10 +312,9 @@ export async function fetchReportData(): Promise<ReportData> {
           vibe: t.vibe,
           subculture: t.subculture,
         })),
+        3,
       )
-      // Inject the generated data URL into thumbnail_url so render
-      // helpers treat it like a real image.
-      for (const t of needsImage) {
+      for (const t of imageCandidates) {
         const url = heroImages.get(t.id)
         if (url) t.thumbnail_url = url
       }
@@ -1212,6 +1221,36 @@ function renderContentIdeasSection(daily: TrendForReport[]): string {
 </tr>`
 }
 
+/**
+ * Detect a usable TikTok video URL in the example list.
+ * TikTok videos look like https://www.tiktok.com/@user/video/12345...
+ * Returns the first match, or null if none found.
+ */
+function pickTikTokEmbed(urls: string[] | null): { url: string; videoId: string; creator: string } | null {
+  if (!urls) return null
+  for (const u of urls) {
+    const m = u.match(/https?:\/\/(?:www\.)?tiktok\.com\/@([a-zA-Z0-9._-]+)\/video\/(\d+)/i)
+    if (m) {
+      return { url: u, videoId: m[2], creator: m[1] }
+    }
+  }
+  return null
+}
+
+/**
+ * TikTok blockquote embed — exactly what oEmbed returns. The TikTok
+ * embed.js script auto-loads each blockquote into a player. We include
+ * the script once per page (via renderReportHtml head).
+ */
+function renderTikTokEmbed(emb: { url: string; videoId: string; creator: string }): string {
+  return `
+<blockquote class="tiktok-embed" cite="${escapeHtml(emb.url)}" data-video-id="${escapeHtml(emb.videoId)}" style="max-width:605px;min-width:325px;margin:0 auto;">
+  <section>
+    <a target="_blank" rel="noreferrer" href="${escapeHtml(emb.url)}">@${escapeHtml(emb.creator)}</a>
+  </section>
+</blockquote>`
+}
+
 function renderSparklineSvg(points: number[], color: string = '#FF1300'): string {
   if (points.length < 2) return ''
   const w = 280; const h = 50
@@ -1241,6 +1280,7 @@ function renderFeatureSpread(t: TrendForReport, rank: number, snapshots: Snapsho
   const cleanInitial = (t.name.replace(/^#/, '').charAt(0).toUpperCase())
   const sparkData = snapshots.map((s) => s.popularity_score)
   const hasSparkline = sparkData.length >= 2
+  const tiktokEmbed = pickTikTokEmbed(t.example_urls ?? null)
 
   // Big art-directed visual (image-or-poster) on top, content below
   const visual = hasThumb
@@ -1281,6 +1321,23 @@ function renderFeatureSpread(t: TrendForReport, rank: number, snapshots: Snapsho
           ${t.hashtags && t.hashtags.length > 0 ? `<p style="margin:14px 0 0;font-family:'Archivo Black',sans-serif;font-size:11px;letter-spacing:0.1em;color:#FF1300;">${escapeHtml(t.hashtags.slice(0, 6).join(' '))}</p>` : ''}
         </td>
       </tr>
+      ${tiktokEmbed ? `
+      <tr>
+        <td style="padding:0 32px 16px;">
+          <table cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#FAF6E6;border:1px solid #000;">
+            <tr>
+              <td style="padding:14px 18px 8px;">
+                <p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:10px;letter-spacing:0.25em;color:#FF1300;text-transform:uppercase;">▶ Live TikTok · @${escapeHtml(tiktokEmbed.creator)}</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:0 18px 18px;text-align:center;">
+                ${renderTikTokEmbed(tiktokEmbed)}
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>` : ''}
       ${brief ? `
       <tr>
         <td style="padding:0 32px 16px;">
@@ -1392,7 +1449,9 @@ export function renderReportHtml(data: ReportData): string {
 <title>Culture Radar Daily — ${dateLabel}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Archivo:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Archivo:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700&family=Newsreader:ital,wght@0,300..700;1,300..700&display=swap" rel="stylesheet" />
+<!-- TikTok embed script — picks up any .tiktok-embed blockquote and renders the player -->
+<script async src="https://www.tiktok.com/embed.js"></script>
 <style>
   body { margin: 0; padding: 0; background: #FFFDF3; font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; color: #000000; }
   h1, h2, h3 { font-family: 'Archivo Black', 'Archivo', sans-serif; letter-spacing: -0.01em; }

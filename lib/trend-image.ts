@@ -114,18 +114,30 @@ export async function generateHeroImage(t: ImageInput): Promise<ImageResult> {
   }
 }
 
+/**
+ * Generate hero images for multiple trends with concurrency limit.
+ * Gemini handles concurrency fine — sequential was too slow. Most
+ * are cache-hits on subsequent calls so wall time is fast.
+ */
 export async function generateHeroImagesForReport(
   inputs: ImageInput[],
+  concurrency = 3,
 ): Promise<Map<string, string>> {
   const results = new Map<string, string>()
-  // Sequential to avoid Gemini rate limit + simplify error handling
-  for (const inp of inputs) {
-    try {
-      const r = await generateHeroImage(inp)
-      if (r.dataUrl) results.set(inp.trendId, r.dataUrl)
-    } catch (err) {
-      console.error('[trend-image] batch failed for', inp.trendId, err)
-    }
-  }
+  let cursor = 0
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, inputs.length) }, async () => {
+      while (cursor < inputs.length) {
+        const i = cursor++
+        const inp = inputs[i]
+        try {
+          const r = await generateHeroImage(inp)
+          if (r.dataUrl) results.set(inp.trendId, r.dataUrl)
+        } catch (err) {
+          console.error('[trend-image] batch failed for', inp.trendId, err)
+        }
+      }
+    }),
+  )
   return results
 }
