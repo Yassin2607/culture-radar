@@ -36,58 +36,76 @@ const COUNTRY_FLAGS: Record<string, { flag: string; label: string }> = {
   'music-trends':         { flag: '🎵', label: 'Music' },
 }
 
+const CATEGORY_FLAGS: Record<string, { flag: string; label: string }> = {
+  food: { flag: '🍴', label: 'Food' },
+  beauty: { flag: '💄', label: 'Beauty' },
+  fashion: { flag: '👗', label: 'Fashion' },
+  home: { flag: '🏠', label: 'Home' },
+  lifestyle: { flag: '✨', label: 'Lifestyle' },
+  tech: { flag: '💻', label: 'Tech' },
+  meme: { flag: '😂', label: 'Meme' },
+  culture: { flag: '🎭', label: 'Culture' },
+  platform: { flag: '📱', label: 'Platform' },
+  sound: { flag: '🎵', label: 'Sound' },
+  sport: { flag: '⚽', label: 'Sport' },
+}
+
 /**
- * Pull recent /discover scrape results, parse out video URLs, pick a
- * geographically + topically diverse set.
+ * Pull TikTok video URLs from active trends' example_urls. These come
+ * from sources that actually link to specific videos (Perplexity
+ * citations, Spotted in the Wild manual reports, some newsletters,
+ * trend hashtag scrapes). Filters to one video per creator + one per
+ * trend for variety, prefers high-popularity recent trends.
  */
 export async function fetchPulseVideos(maxVideos = 6): Promise<DiscoverVideoForReport[]> {
-  // Get latest scrape per /discover source from last 48h
   const rows = (await sql().query(
-    `SELECT DISTINCT ON (source_id)
-            source_id, source_name, url, text_snippet, scraped_at
-       FROM culture_scrape_results
-      WHERE url ILIKE '%tiktok.com/discover/%'
-        AND status = 'ok'
-        AND scraped_at >= NOW() - INTERVAL '48 hours'
-        AND length(text_snippet) > 200
-      ORDER BY source_id, scraped_at DESC
-      LIMIT 30`,
-  )) as Array<{ source_id: number; source_name: string; url: string; text_snippet: string; scraped_at: string }>
+    `SELECT id, name, category, country_relevance, example_urls,
+            popularity_score, first_seen_at
+       FROM culture_trends
+      WHERE status = 'active'
+        AND (verify_verdict IS NULL OR verify_verdict != 'fabricated')
+        AND example_urls IS NOT NULL
+        AND array_length(example_urls, 1) > 0
+        AND first_seen_at >= NOW() - INTERVAL '14 days'
+      ORDER BY popularity_score DESC, first_seen_at DESC
+      LIMIT 200`,
+  )) as Array<{
+    id: string; name: string; category: string
+    country_relevance: string[] | null
+    example_urls: string[]
+    popularity_score: number; first_seen_at: string
+  }>
 
-  // Parse video URLs from each scrape's text_snippet (which is our
-  // discoverResultToMarkdown output: lists "@creator — https://...")
-  const videoLinkRe = /https?:\/\/(?:www\.)?tiktok\.com\/@([a-zA-Z0-9._-]+)\/video\/(\d+)/g
+  const videoLinkRe = /https?:\/\/(?:www\.)?tiktok\.com\/@([a-zA-Z0-9._-]+)\/video\/(\d+)/i
   const collected: DiscoverVideoForReport[] = []
   const seenVideoIds = new Set<string>()
   const seenCreators = new Set<string>()
+  const seenTrendIds = new Set<string>()
 
   for (const r of rows) {
-    const slugMatch = r.url.match(/\/discover\/([^/?#]+)/)
-    const slug = slugMatch ? slugMatch[1] : 'unknown'
-    const meta = COUNTRY_FLAGS[slug] ?? { flag: '📱', label: slug }
-
-    // Take up to 2 videos per source to keep variety
-    let perSource = 0
-    let m: RegExpExecArray | null
-    videoLinkRe.lastIndex = 0
-    while ((m = videoLinkRe.exec(r.text_snippet)) !== null && perSource < 2) {
+    if (seenTrendIds.has(r.id)) continue
+    for (const u of r.example_urls) {
+      const m = u.match(videoLinkRe)
+      if (!m) continue
       const creator = m[1]
       const videoId = m[2]
       if (seenVideoIds.has(videoId) || seenCreators.has(creator)) continue
+      const meta = CATEGORY_FLAGS[r.category] ?? { flag: '📱', label: r.category }
       collected.push({
         creator,
         videoId,
         videoUrl: `https://www.tiktok.com/@${creator}/video/${videoId}`,
         countryFlag: meta.flag,
-        countryLabel: meta.label,
-        sourceTopic: slug,
+        countryLabel: r.name.slice(0, 40),  // trend name as label
+        sourceTopic: r.category,
       })
       seenVideoIds.add(videoId)
       seenCreators.add(creator)
-      perSource++
+      seenTrendIds.add(r.id)
+      if (collected.length >= maxVideos) return collected
+      break  // one video per trend
     }
   }
 
-  // Shuffle slightly and return top N
-  return collected.slice(0, maxVideos)
+  return collected
 }
