@@ -119,6 +119,28 @@ export interface EditorPick {
   reason: string
 }
 
+export interface VelocityLeader {
+  id: string
+  name: string
+  category: string
+  popularityNow: number
+  popularityThen: number
+  deltaPopularity: number
+  growthScore: number | null
+  example_urls: string[] | null
+  subculture: string | null
+  daysOld: number
+}
+
+export interface SkipItem {
+  id: string
+  name: string
+  category: string
+  verdict: string  // 'generic' | 'uncertain'
+  reasoning: string | null
+  popularityScore: number
+}
+
 export interface ReportData {
   generatedAt: string
   week: string
@@ -139,6 +161,8 @@ export interface ReportData {
   editorPicks: EditorPick[]
   snapshotsByTrendId: Record<string, SnapshotForReport[]>
   pulseVideos: DiscoverVideoForReport[]
+  velocityLeaders: VelocityLeader[]
+  skipList: SkipItem[]
 }
 
 export async function fetchReportData(): Promise<ReportData> {
@@ -379,6 +403,80 @@ export async function fetchReportData(): Promise<ReportData> {
     }
   }
 
+  // ── Velocity Leaders: who climbed fastest in popularity yesterday→today ──
+  // Uses culture_trend_snapshots which is populated by /api/culture/snapshot-trends
+  // in the daily cron. Falls back to growth_score for trends without a yesterday
+  // snapshot (e.g. brand-new trends that didn't exist 24h ago).
+  const velocityLeaders = (await sql().query(
+    `WITH today_snap AS (
+       SELECT trend_id, popularity_score AS p_now, growth_score AS g_now
+         FROM culture_trend_snapshots
+        WHERE snapshot_date = CURRENT_DATE
+     ), yesterday_snap AS (
+       SELECT trend_id, popularity_score AS p_then
+         FROM culture_trend_snapshots
+        WHERE snapshot_date = CURRENT_DATE - INTERVAL '1 day'
+     )
+     SELECT t.id, t.name, t.category, t.example_urls, t.subculture,
+            t.growth_score,
+            ROUND(EXTRACT(EPOCH FROM (NOW() - t.first_seen_at)) / 86400)::int AS days_old,
+            today_snap.p_now,
+            COALESCE(yesterday_snap.p_then, today_snap.p_now) AS p_then,
+            (today_snap.p_now - COALESCE(yesterday_snap.p_then, today_snap.p_now)) AS delta
+       FROM culture_trends t
+       JOIN today_snap ON today_snap.trend_id = t.id
+  LEFT JOIN yesterday_snap ON yesterday_snap.trend_id = t.id
+      WHERE t.status = 'active'
+        AND t.first_seen_at >= NOW() - INTERVAL '7 days'
+        AND COALESCE(array_to_string(t.example_urls, ' '), '') !~ '/(202[0-4]|2025/[0-1][0-9]|2026/0[1-3])/'
+      ORDER BY delta DESC, t.growth_score DESC NULLS LAST, today_snap.p_now DESC
+      LIMIT 5`,
+  )) as Array<{
+    id: string; name: string; category: string;
+    example_urls: string[] | null; subculture: string | null;
+    growth_score: string | null; days_old: number;
+    p_now: number; p_then: number; delta: number
+  }>
+  const velocityLeadersOut: VelocityLeader[] = velocityLeaders.map((v) => ({
+    id: v.id,
+    name: v.name,
+    category: v.category,
+    popularityNow: Number(v.p_now),
+    popularityThen: Number(v.p_then),
+    deltaPopularity: Number(v.delta),
+    growthScore: v.growth_score === null ? null : Number(v.growth_score),
+    example_urls: v.example_urls,
+    subculture: v.subculture,
+    daysOld: v.days_old,
+  }))
+
+  // ── Skip List: trends the verifier flagged as generic/uncertain ──
+  // These cleared the discovery bar (popularity, freshness) but failed
+  // editorial judgement during /api/culture/verify-trends. Showing them
+  // as "do not chase" gives the team explicit signal on what NOT to
+  // build content around.
+  const skipList = (await sql().query(
+    `SELECT id, name, category, verify_verdict, reasoning, popularity_score
+       FROM culture_trends
+      WHERE verify_verdict IN ('generic', 'uncertain')
+        AND verified_at >= NOW() - INTERVAL '7 days'
+        AND popularity_score >= 6
+      ORDER BY popularity_score DESC, verified_at DESC
+      LIMIT 5`,
+  )) as Array<{
+    id: string; name: string; category: string;
+    verify_verdict: string; reasoning: string | null;
+    popularity_score: number
+  }>
+  const skipListOut: SkipItem[] = skipList.map((s) => ({
+    id: s.id,
+    name: s.name,
+    category: s.category,
+    verdict: s.verify_verdict,
+    reasoning: s.reasoning,
+    popularityScore: Number(s.popularity_score),
+  }))
+
   // Issue number: epoch-day / 7 since 2026-01-01 → weekly increment
   const epoch = new Date('2026-01-01').getTime()
   const issueNumber = Math.max(1, Math.floor((Date.now() - epoch) / (7 * 86_400_000)) + 1)
@@ -403,6 +501,8 @@ export async function fetchReportData(): Promise<ReportData> {
     editorPicks,
     snapshotsByTrendId,
     pulseVideos,
+    velocityLeaders: velocityLeadersOut,
+    skipList: skipListOut,
   }
 }
 
@@ -1539,6 +1639,106 @@ function renderFeatureSpread(t: TrendForReport, rank: number, snapshots: Snapsho
 </tr>`
 }
 
+/**
+ * Velocity Leaders — who moved the most yesterday→today.
+ * Surfaces fast-rising trends regardless of their absolute popularity.
+ * A trend going from 5 → 9 is more interesting than one stuck at 9.
+ */
+function renderVelocityLeaders(leaders: VelocityLeader[]): string {
+  if (leaders.length === 0) return ''
+  return `
+<tr><td style="background:#FFFDF3;height:32px;"></td></tr>
+<tr>
+  <td style="padding:24px 40px 8px;background:#0a0a0a;border-top:6px solid #FF1300;">
+    <table cellpadding="0" cellspacing="0" border="0">
+      <tr>
+        <td style="background:#FF1300;color:#FFFDF3;padding:4px 10px;font-family:'Archivo Black',sans-serif;font-size:10px;letter-spacing:0.15em;text-transform:uppercase;font-weight:900;">⇡</td>
+        <td width="12">&nbsp;</td>
+        <td><p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#FFFDF3;">Velocity · ${leaders.length} climbers</p></td>
+      </tr>
+    </table>
+    <h2 style="margin:14px 0 4px 0;font-family:'Archivo Black',sans-serif;font-size:32px;line-height:1.05;color:#FFFDF3;text-transform:uppercase;letter-spacing:-0.02em;">Biggest jumps<br/><span style="color:#FF1300;">since gisteren.</span></h2>
+    <p style="margin:8px 0 20px 0;font-family:'Inter',sans-serif;font-size:13px;color:#FFFDF3;opacity:0.7;">Trends die de afgelopen 24 uur het meest stegen in populariteit. Niet de grootste, wel de snelste.</p>
+  </td>
+</tr>
+<tr><td style="padding:0 40px 24px;background:#0a0a0a;">
+  <table cellpadding="0" cellspacing="0" border="0" width="100%">
+    ${leaders.map((v, i) => {
+      const color = CATEGORY_COLOR[v.category] ?? '#FF1300'
+      const arrow = v.deltaPopularity > 0 ? '↑' : v.deltaPopularity < 0 ? '↓' : '→'
+      const deltaLabel = v.deltaPopularity > 0
+        ? `+${v.deltaPopularity}`
+        : String(v.deltaPopularity)
+      const dayLabel = v.daysOld <= 1 ? `${v.daysOld}d` : `${v.daysOld}d`
+      return `
+    <tr>
+      <td style="padding:14px 0;border-bottom:1px solid #FFFDF310;">
+        <table cellpadding="0" cellspacing="0" border="0" width="100%">
+          <tr>
+            <td width="60" valign="middle" style="text-align:center;">
+              <p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:32px;line-height:1;color:${color};letter-spacing:-0.04em;">${arrow}</p>
+              <p style="margin:2px 0 0;font-family:'Archivo Black',sans-serif;font-size:18px;color:#FFFDF3;line-height:1;">${deltaLabel}</p>
+            </td>
+            <td valign="middle" style="padding:0 18px;">
+              <p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:9px;letter-spacing:0.2em;color:${color};text-transform:uppercase;">#${String(i + 1).padStart(2, '0')} · ${escapeHtml(v.category).toUpperCase()}${v.subculture ? ` · ${escapeHtml(v.subculture)}` : ''} · ${dayLabel} oud</p>
+              <h3 style="margin:6px 0 0;font-family:'Archivo Black',sans-serif;font-size:20px;line-height:1.1;color:#FFFDF3;text-transform:uppercase;letter-spacing:-0.015em;">${escapeHtml(v.name)}</h3>
+              <p style="margin:6px 0 0;font-family:'Inter',sans-serif;font-size:11px;color:#FFFDF3;opacity:0.55;">Popularity ${v.popularityThen} → <strong style="color:#FFFDF3;opacity:1;">${v.popularityNow}</strong>${v.growthScore !== null ? ` · Growth-score ${v.growthScore.toFixed(1)}` : ''}</p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>`
+    }).join('')}
+  </table>
+</td></tr>`
+}
+
+/**
+ * Skip List — popular trends we deliberately don't recommend.
+ * Generic categories, fabricated claims, mature/established movements.
+ * Showing them gives the team explicit signal on what to PASS on.
+ */
+function renderSkipList(skips: SkipItem[]): string {
+  if (skips.length === 0) return ''
+  return `
+<tr><td style="background:#FFFDF3;height:32px;"></td></tr>
+<tr>
+  <td style="padding:24px 40px 8px;background:#F4F1E8;border-top:6px solid #888;">
+    <table cellpadding="0" cellspacing="0" border="0">
+      <tr>
+        <td style="background:#888;color:#FFFDF3;padding:4px 10px;font-family:'Archivo Black',sans-serif;font-size:10px;letter-spacing:0.15em;text-transform:uppercase;font-weight:900;">⊘</td>
+        <td width="12">&nbsp;</td>
+        <td><p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#000;">Skip · ${skips.length} false positives</p></td>
+      </tr>
+    </table>
+    <h2 style="margin:14px 0 4px 0;font-family:'Archivo Black',sans-serif;font-size:32px;line-height:1.05;color:#000;text-transform:uppercase;letter-spacing:-0.02em;">Don't chase<br/><span style="color:#888;">these.</span></h2>
+    <p style="margin:8px 0 20px 0;font-family:'Inter',sans-serif;font-size:13px;color:#000;opacity:0.6;">Trends die populair lijken maar door onze verifier zijn afgekeurd. Te generiek, niet specifiek genoeg, of een mature beweging zonder fresh hook. Pas hier op met haakjes.</p>
+  </td>
+</tr>
+<tr><td style="padding:0 40px 24px;background:#F4F1E8;">
+  <table cellpadding="0" cellspacing="0" border="0" width="100%">
+    ${skips.map((s) => {
+      const verdictColor = s.verdict === 'generic' ? '#888' : '#B8860B'
+      const verdictLabel = s.verdict === 'generic' ? 'TE GENERIEK' : 'ONZEKER'
+      return `
+    <tr>
+      <td style="padding:12px 0;border-bottom:1px dashed #00000025;">
+        <table cellpadding="0" cellspacing="0" border="0" width="100%">
+          <tr>
+            <td valign="top" style="padding:0;">
+              <p style="margin:0;font-family:'Archivo Black',sans-serif;font-size:9px;letter-spacing:0.2em;color:${verdictColor};text-transform:uppercase;">${verdictLabel} · ${escapeHtml(s.category).toUpperCase()} · POP ${s.popularityScore}/10</p>
+              <h3 style="margin:6px 0 6px;font-family:'Archivo Black',sans-serif;font-size:18px;line-height:1.1;color:#000;text-transform:uppercase;letter-spacing:-0.015em;text-decoration:line-through;text-decoration-color:#888;">${escapeHtml(s.name)}</h3>
+              ${s.reasoning ? `<p style="margin:0;font-family:'Inter',sans-serif;font-size:12px;line-height:1.45;color:#444;"><strong style="color:${verdictColor};">Waarom skip:</strong> ${escapeHtml(s.reasoning.slice(0, 220))}${s.reasoning.length > 220 ? '…' : ''}</p>` : ''}
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>`
+    }).join('')}
+  </table>
+</td></tr>`
+}
+
 function renderEditorPicksSection(picks: EditorPick[]): string {
   if (picks.length === 0) return ''
   return `
@@ -1737,9 +1937,13 @@ export function renderReportHtml(data: ReportData): string {
 
         ${data.breakout.length > 0 ? renderBreakoutSection(data.breakout) : ''}
 
+        ${data.velocityLeaders.length > 0 ? renderVelocityLeaders(data.velocityLeaders) : ''}
+
         ${data.byCountry.length > 0 ? renderCountryPulseSection(data.byCountry) : ''}
 
         ${data.bySubculture.length > 0 ? renderSubcultureSection(data.bySubculture) : ''}
+
+        ${data.skipList.length > 0 ? renderSkipList(data.skipList) : ''}
 
         ${data.inspiration.length > 0 ? `
         <!-- INSPIRATION -->
