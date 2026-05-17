@@ -109,7 +109,13 @@ export async function fetchCreativeCenterHashtags(
       const pages = q.state?.data?.pages
       if (!Array.isArray(pages)) continue
       for (const p of pages) {
-        if (Array.isArray(p.list)) items.push(...p.list)
+        // p can be null when TikTok returns an empty page (e.g. when
+        // pagination is exhausted or auth challenge served instead of
+        // data). Without this guard the scraper crashes with
+        // "Cannot read properties of null (reading 'list')".
+        if (p && typeof p === 'object' && Array.isArray((p as { list?: unknown[] }).list)) {
+          items.push(...(p as { list: unknown[] }).list)
+        }
       }
     }
 
